@@ -901,12 +901,27 @@ class WindowManager {
       return this.isVisible;
     }
 
-    if (this.isVisible) {
+    const chatWindow = this.windows.get('chat');
+    const chatVisible =
+      chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible();
+
+    // Prefer chat-only UX: hide if chat is up; otherwise show only chat
+    if (chatVisible || this.isVisible) {
       this.hideAllWindows();
-    } else {
-      this.showAllWindows();
+      const llmWindow = this.windows.get('llmResponse');
+      if (llmWindow && !llmWindow.isDestroyed() && llmWindow.isVisible()) {
+        llmWindow.hide();
+      }
+      return this.isVisible;
     }
-    
+
+    const mainWindow = this.windows.get('main');
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      mainWindow.hide();
+    }
+    this.showChatWindow();
+    this.isVisible = true;
+    logger.info('Chat window shown via visibility toggle');
     return this.isVisible;
   }
 

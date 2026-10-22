@@ -131,8 +131,8 @@ class ApplicationController {
       "CommandOrControl+Shift+\\": () => this.clearSessionMemory(),
       "CommandOrControl+,": () => windowManager.showSettings(),
       "Alt+A": () => windowManager.toggleInteraction(),
-      // ⌥R: open UI in interactive mode (not click-through), do not record
-      "Alt+R": () => this.openAppInteractive(),
+      // ⌥R: toggle chat window only (interactive, no record)
+      "Alt+R": () => this.toggleChatWindow(),
       // ⌥Z: start / stop voice input
       "Alt+Z": () => this.toggleSpeechRecognition(),
       "CommandOrControl+Shift+T": () => windowManager.forceAlwaysOnTopForAllWindows(),
@@ -504,10 +504,12 @@ class ApplicationController {
 
     ipcMain.handle("close-window", (event) => {
       const webContents = event.sender;
-      const window = windowManager.windows.forEach((win, type) => {
-        if (win.webContents === webContents) {
+      windowManager.windows.forEach((win, type) => {
+        if (win.webContents === webContents && !win.isDestroyed()) {
           win.hide();
-          return true;
+          if (type === "chat") {
+            windowManager.isVisible = false;
+          }
         }
       });
       return { success: true };
@@ -586,26 +588,43 @@ class ApplicationController {
   }
 
   /**
-   * ⌥R — show app windows and disable click-through (interactive).
-   * Does not start recording.
+   * ⌥R — toggle chat window only (interactive). Does not start recording.
+   * Does not show the main / skill bar window.
    */
-  openAppInteractive() {
+  toggleChatWindow() {
     try {
-      if (!windowManager.isVisible) {
-        windowManager.showAllWindows();
-      } else {
-        // Ensure main/chat are visible on current desktop
-        const mainWindow = windowManager.getWindow("main");
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          windowManager.showOnCurrentDesktop(mainWindow, { force: false });
-        }
-        windowManager.showChatWindow();
+      const chatWindow = windowManager.getWindow("chat");
+      const chatVisible =
+        chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible();
+
+      if (chatVisible) {
+        windowManager.hideChatWindow();
+        logger.info("Chat window hidden via ⌥R");
+        return;
       }
+
+      // Keep other UI hidden — only surface chat
+      const mainWindow = windowManager.getWindow("main");
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+        mainWindow.hide();
+      }
+
+      windowManager.showChatWindow();
       windowManager.setInteractive(true);
-      logger.info("App opened in interactive mode via ⌥R");
+      logger.info("Chat window shown (interactive) via ⌥R");
     } catch (error) {
-      logger.error("Failed to open app interactively", { error: error.message });
+      logger.error("Failed to toggle chat via ⌥R", { error: error.message });
     }
+  }
+
+  /** @deprecated use toggleChatWindow */
+  openAppInteractive() {
+    this.toggleChatWindow();
+  }
+
+  /** @deprecated use toggleChatWindow */
+  toggleAppInteractive() {
+    this.toggleChatWindow();
   }
 
   /**
@@ -622,8 +641,10 @@ class ApplicationController {
 
   startVoiceInput(source = "unknown") {
     try {
-      if (!windowManager.isVisible) {
-        windowManager.showAllWindows();
+      // Only surface chat — do not reopen the main skill bar
+      const mainWindow = windowManager.getWindow("main");
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+        mainWindow.hide();
       }
       windowManager.showChatWindow();
       speechService.startRecording();

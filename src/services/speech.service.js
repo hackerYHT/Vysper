@@ -1,11 +1,14 @@
 /**
  * Speech provider selector.
  * Default: local Chinese Whisper (no cloud key).
- * Set SPEECH_PROVIDER=azure to use Azure Speech.
+ * SPEECH_PROVIDER=doubao → 豆包流式 ASR
+ * SPEECH_PROVIDER=azure  → Azure Speech
  */
 const provider = (process.env.SPEECH_PROVIDER || 'local').toLowerCase();
 
-if (provider === 'azure') {
+if (provider === 'doubao') {
+  module.exports = require('./speech-doubao.service');
+} else if (provider === 'azure') {
   module.exports = require('./speech-azure.service');
 } else {
   module.exports = require('./local-whisper.service');

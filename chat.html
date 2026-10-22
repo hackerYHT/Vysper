@@ -33,6 +33,8 @@
         -webkit-app-region: drag;
       }
       .chat-header {
+        position: relative;
+        z-index: 3000;
         padding: 16px 20px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         display: flex;
@@ -44,6 +46,7 @@
         cursor: move;
         flex-shrink: 0;
         gap: 12px;
+        overflow: visible;
       }
       .chat-header-actions {
         display: flex;
@@ -65,6 +68,74 @@
       }
       .chat-header-btn:hover {
         background: rgba(255, 255, 255, 0.22);
+      }
+      .chat-header-btn.help-btn {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        justify-content: center;
+        border-radius: 50%;
+        font-size: 13px;
+        font-weight: 700;
+        font-family: ui-serif, Georgia, "Times New Roman", serif;
+      }
+      .chat-header-btn.help-btn.active {
+        background: rgba(255, 255, 255, 0.28);
+      }
+      .shortcuts-help-wrap {
+        position: relative;
+        -webkit-app-region: no-drag;
+      }
+      .shortcuts-help-panel {
+        display: none;
+        position: fixed;
+        z-index: 9999;
+        width: min(280px, calc(100vw - 24px));
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: rgba(18, 18, 22, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(18px);
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 12px;
+        line-height: 1.45;
+        -webkit-app-region: no-drag;
+        pointer-events: auto;
+      }
+      .shortcuts-help-panel.visible {
+        display: block;
+      }
+      .shortcuts-help-panel h4 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.98);
+      }
+      .shortcuts-help-panel dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 10px;
+        align-items: baseline;
+      }
+      .shortcuts-help-panel dt {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        color: rgba(255, 220, 160, 0.95);
+        white-space: nowrap;
+      }
+      .shortcuts-help-panel dd {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      .shortcuts-help-panel .help-note {
+        margin: 10px 0 0;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 11px;
       }
       .header-title {
         color: rgba(255, 255, 255, 0.95);
@@ -678,6 +749,25 @@
             <i class="fas fa-plus"></i>
             新建会话
           </button>
+          <div class="shortcuts-help-wrap" id="shortcutsHelpWrap">
+            <button type="button" class="chat-header-btn help-btn" id="shortcutsHelpBtn" aria-label="快捷键说明" aria-expanded="false" title="快捷键说明">
+              ?
+            </button>
+            <div class="shortcuts-help-panel" id="shortcutsHelpPanel" role="tooltip">
+              <h4>常用快捷键</h4>
+              <dl>
+                <dt>⌥R</dt><dd>打开 / 关闭聊天窗口</dd>
+                <dt>⌥Z</dt><dd>开始 / 结束语音</dd>
+                <dt>Esc</dt><dd>停语音 / 中断回答</dd>
+                <dt>⌥A</dt><dd>穿透 ↔ 可点击</dd>
+                <dt>⌘,</dt><dd>打开 Settings</dd>
+                <dt>⌘⇧\</dt><dd>新建会话</dd>
+                <dt>⌘⇧S</dt><dd>截图识图解答</dd>
+                <dt>⌘⇧V</dt><dd>显示 / 隐藏聊天窗口</dd>
+              </dl>
+              <p class="help-note">悬浮或点击「?」查看 · Windows 用 Alt / Ctrl</p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1050,6 +1140,82 @@
               stopGenerationBtn.style.display = 'none';
             });
           }
+        }
+
+        const helpWrap = document.getElementById('shortcutsHelpWrap');
+        const helpBtn = document.getElementById('shortcutsHelpBtn');
+        const helpPanel = document.getElementById('shortcutsHelpPanel');
+        if (helpWrap && helpBtn && helpPanel) {
+          let helpPinned = false;
+          let helpHideTimer = null;
+
+          // Keep panel above messages/overlays via fixed + body append
+          if (helpPanel.parentElement !== document.body) {
+            document.body.appendChild(helpPanel);
+          }
+
+          const positionHelp = () => {
+            const rect = helpBtn.getBoundingClientRect();
+            const gap = 8;
+            const panelWidth = Math.min(280, window.innerWidth - 24);
+            let left = rect.right - panelWidth;
+            left = Math.max(12, Math.min(left, window.innerWidth - panelWidth - 12));
+            let top = rect.bottom + gap;
+            helpPanel.style.width = panelWidth + 'px';
+            helpPanel.style.left = left + 'px';
+            helpPanel.style.top = top + 'px';
+            helpPanel.style.right = 'auto';
+            // If clipped at bottom, flip above the button
+            const panelHeight = helpPanel.offsetHeight || 220;
+            if (top + panelHeight > window.innerHeight - 12) {
+              helpPanel.style.top = Math.max(12, rect.top - panelHeight - gap) + 'px';
+            }
+          };
+
+          const showHelp = () => {
+            if (helpHideTimer) {
+              clearTimeout(helpHideTimer);
+              helpHideTimer = null;
+            }
+            helpPanel.classList.add('visible');
+            positionHelp();
+            helpBtn.classList.toggle('active', helpPinned);
+            helpBtn.setAttribute('aria-expanded', 'true');
+          };
+
+          const hideHelp = (force = false) => {
+            if (helpPinned && !force) return;
+            helpPanel.classList.remove('visible');
+            helpBtn.classList.remove('active');
+            helpBtn.setAttribute('aria-expanded', 'false');
+          };
+
+          const scheduleHide = () => {
+            if (helpPinned) return;
+            helpHideTimer = setTimeout(() => hideHelp(false), 160);
+          };
+
+          helpBtn.addEventListener('mouseenter', showHelp);
+          helpBtn.addEventListener('mouseleave', scheduleHide);
+          helpPanel.addEventListener('mouseenter', showHelp);
+          helpPanel.addEventListener('mouseleave', scheduleHide);
+          window.addEventListener('resize', () => {
+            if (helpPanel.classList.contains('visible')) positionHelp();
+          });
+
+          helpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            helpPinned = !helpPinned;
+            if (helpPinned) showHelp();
+            else hideHelp(true);
+          });
+
+          document.addEventListener('click', (e) => {
+            if (!helpPinned) return;
+            if (helpBtn.contains(e.target) || helpPanel.contains(e.target)) return;
+            helpPinned = false;
+            hideHelp(true);
+          });
         }
 
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
