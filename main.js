@@ -1,6 +1,8 @@
 require("dotenv").config();
 
-const { app, BrowserWindow, globalShortcut, session, ipcMain } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, dialog } = require("electron");
+const fs = require("fs");
+const path = require("path");
 const logger = require("./src/core/logger").createServiceLogger("MAIN");
 const config = require("./src/core/config");
 
@@ -8,6 +10,7 @@ const config = require("./src/core/config");
 const ocrService = require("./src/services/ocr.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
+const dshService = require("./src/services/dsh-headless.service");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -17,6 +20,12 @@ class ApplicationController {
   constructor() {
     this.isReady = false;
     this.activeSkill = "normal";
+    this.codingLanguage = "javascript";
+    this.appIcon = "terminal";
+    this.dshEnabled = !!config.get("dsh.enabled");
+    this.workspacePath = "";
+    this.dshHarnessDir = config.get("dsh.harnessDir") || "";
+    this.settingsPath = path.join(config.get("app.dataDir"), "settings.json");
 
     // Window configurations for reference
     this.windowConfigs = {
@@ -26,6 +35,7 @@ class ApplicationController {
       settings: { title: "Settings" },
     };
 
+    this.loadPersistedSettings();
     this.setupStealth();
     this.setupEventHandlers();
   }
@@ -120,7 +130,10 @@ class ApplicationController {
       "CommandOrControl+Shift+\\": () => this.clearSessionMemory(),
       "CommandOrControl+,": () => windowManager.showSettings(),
       "Alt+A": () => windowManager.toggleInteraction(),
-      "Alt+R": () => this.toggleSpeechRecognition(),
+      // ⌥R: open UI in interactive mode (not click-through), do not record
+      "Alt+R": () => this.openAppInteractive(),
+      // ⌥Z: start / stop voice input
+      "Alt+Z": () => this.toggleSpeechRecognition(),
       "CommandOrControl+Shift+T": () => windowManager.forceAlwaysOnTopForAllWindows(),
       "CommandOrControl+Shift+Alt+T": () => {
         const results = windowManager.testAlwaysOnTopForAllWindows();
@@ -142,6 +155,7 @@ class ApplicationController {
   setupServiceEventHandlers() {
     speechService.on("recording-started", () => {
       windowManager.handleRecordingStarted();
+      this.registerEscapeToStopVoice();
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-started");
       });
@@ -149,6 +163,7 @@ class ApplicationController {
 
     speechService.on("recording-stopped", () => {
       windowManager.handleRecordingStopped();
+      this.unregisterEscapeToStopVoice();
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-stopped");
       });
@@ -295,9 +310,11 @@ class ApplicationController {
     });
 
     ipcMain.handle("clear-session-memory", () => {
-      sessionManager.clear();
-      windowManager.broadcastToAllWindows("session-cleared");
-      return { success: true };
+      return this.newSession({ source: "ipc-clear" });
+    });
+
+    ipcMain.handle("new-session", () => {
+      return this.newSession({ source: "ipc-new" });
     });
 
     ipcMain.handle("force-always-on-top", () => {
@@ -425,6 +442,39 @@ class ApplicationController {
       return this.saveSettings(settings);
     });
 
+    ipcMain.handle("pick-workspace-directory", async () => {
+      const settingsWindow = windowManager.getWindow("settings");
+      // macOS panel + alwaysOnTop windows swallow native dialogs unless we
+      // briefly drop always-on-top and pass the parent BrowserWindow.
+      const wasOnTop = !!(settingsWindow && !settingsWindow.isDestroyed());
+      try {
+        if (wasOnTop) {
+          settingsWindow.setAlwaysOnTop(false);
+        }
+        const opts = {
+          title: "选择工作区目录（dsh 将基于此回答）",
+          properties: ["openDirectory", "createDirectory"],
+          defaultPath: this.workspacePath || undefined,
+        };
+        const result = settingsWindow && !settingsWindow.isDestroyed()
+          ? await dialog.showOpenDialog(settingsWindow, opts)
+          : await dialog.showOpenDialog(opts);
+        if (result.canceled || !result.filePaths?.[0]) {
+          return { canceled: true };
+        }
+        return { path: result.filePaths[0] };
+      } finally {
+        if (wasOnTop && settingsWindow && !settingsWindow.isDestroyed()) {
+          if (process.platform === "darwin" && typeof settingsWindow.setAlwaysOnTop === "function") {
+            settingsWindow.setAlwaysOnTop(true, "floating");
+          } else {
+            settingsWindow.setAlwaysOnTop(true);
+          }
+          settingsWindow.focus();
+        }
+      }
+    });
+
     ipcMain.handle("update-app-icon", (event, iconKey) => {
       return this.updateAppIcon(iconKey);
     });
@@ -525,34 +575,117 @@ class ApplicationController {
     });
   }
 
-  toggleSpeechRecognition() {
-    const currentStatus = speechService.getStatus();
-    if (currentStatus.isRecording) {
-      try {
-        speechService.stopRecording();
-        windowManager.hideChatWindow();
-        logger.info("Speech recognition stopped via global shortcut");
-      } catch (error) {
-        logger.error("Error stopping speech recognition:", error);
-      }
-    } else {
-      try {
-        speechService.startRecording();
+  /**
+   * ⌥R — show app windows and disable click-through (interactive).
+   * Does not start recording.
+   */
+  openAppInteractive() {
+    try {
+      if (!windowManager.isVisible) {
+        windowManager.showAllWindows();
+      } else {
+        // Ensure main/chat are visible on current desktop
+        const mainWindow = windowManager.getWindow("main");
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          windowManager.showOnCurrentDesktop(mainWindow, { force: false });
+        }
         windowManager.showChatWindow();
-        logger.info("Speech recognition started via global shortcut");
-      } catch (error) {
-        logger.error("Error starting speech recognition:", error);
       }
+      windowManager.setInteractive(true);
+      logger.info("App opened in interactive mode via ⌥R");
+    } catch (error) {
+      logger.error("Failed to open app interactively", { error: error.message });
     }
   }
 
-  clearSessionMemory() {
+  /**
+   * ⌥Z — toggle voice input. Esc also stops while recording.
+   */
+  toggleSpeechRecognition() {
+    const currentStatus = speechService.getStatus();
+    if (currentStatus.isRecording) {
+      this.stopVoiceInput("shortcut-alt-z");
+    } else {
+      this.startVoiceInput("shortcut-alt-z");
+    }
+  }
+
+  startVoiceInput(source = "unknown") {
     try {
-      sessionManager.clear();
-      windowManager.broadcastToAllWindows("session-cleared");
-      logger.info("Session memory cleared via global shortcut");
+      if (!windowManager.isVisible) {
+        windowManager.showAllWindows();
+      }
+      windowManager.showChatWindow();
+      speechService.startRecording();
+      this.registerEscapeToStopVoice();
+      logger.info("Voice input started", { source });
     } catch (error) {
-      logger.error("Error clearing session memory:", error);
+      logger.error("Error starting voice input", { error: error.message, source });
+      this.unregisterEscapeToStopVoice();
+    }
+  }
+
+  stopVoiceInput(source = "unknown") {
+    try {
+      const status = speechService.getStatus();
+      if (status.isRecording) {
+        speechService.stopRecording();
+      }
+      // Keep chat open so the answer can stream in
+      this.unregisterEscapeToStopVoice();
+      logger.info("Voice input stopped", { source });
+    } catch (error) {
+      logger.error("Error stopping voice input", { error: error.message, source });
+      this.unregisterEscapeToStopVoice();
+    }
+  }
+
+  registerEscapeToStopVoice() {
+    try {
+      // Only steal Esc while recording, so other apps keep Esc otherwise
+      globalShortcut.unregister("Escape");
+      const ok = globalShortcut.register("Escape", () => {
+        this.stopVoiceInput("escape");
+      });
+      logger.debug("Escape shortcut for voice stop", { success: ok });
+    } catch (error) {
+      logger.warn("Failed to register Escape for voice stop", { error: error.message });
+    }
+  }
+
+  unregisterEscapeToStopVoice() {
+    try {
+      globalShortcut.unregister("Escape");
+    } catch (_) { /* ignore */ }
+  }
+
+  clearSessionMemory() {
+    this.newSession({ source: "shortcut" });
+  }
+
+  /**
+   * Start a fresh conversation: clear Vysper memory + dsh session continuity.
+   */
+  newSession({ source = "unknown" } = {}) {
+    try {
+      dshService.cancel();
+      dshService.clearSession();
+      sessionManager.clear();
+
+      const payload = {
+        reason: "new-session",
+        source,
+        timestamp: new Date().toISOString(),
+        workspacePath: this.workspacePath || null,
+        dshEnabled: this.shouldUseDsh(),
+      };
+
+      windowManager.broadcastToAllWindows("session-cleared", payload);
+      logger.info("New session started", payload);
+      return { success: true, ...payload };
+    } catch (error) {
+      logger.error("Failed to start new session", { error: error.message, source });
+      return { success: false, error: error.message };
     }
   }
 
@@ -696,10 +829,88 @@ class ApplicationController {
     }
   }
 
+  shouldUseDsh() {
+    return !!(this.dshEnabled && this.workspacePath && fs.existsSync(this.workspacePath));
+  }
+
+  async processWithDsh(text, { isTranscriptionResponse = false } = {}) {
+    const started = Date.now();
+    const streamMeta = {
+      skill: this.activeSkill,
+      provider: "dsh-headless",
+      workspacePath: this.workspacePath,
+      isTranscriptionResponse,
+    };
+
+    if (!isTranscriptionResponse) {
+      windowManager.showLLMLoading();
+    }
+    windowManager.beginLLMResponseStream(streamMeta);
+    windowManager.updateLLMResponseStream(
+      `正在用 dsh 分析工作区…\n${this.workspacePath}`,
+      streamMeta
+    );
+
+    let lastFlush = 0;
+    let latestAnswer = "";
+    const llmResult = await dshService.ask(text, {
+      workspacePath: this.workspacePath,
+      harnessDir: this.dshHarnessDir || undefined,
+      timeoutMs: config.get("dsh.timeoutMs"),
+      onStatus: (msg) => {
+        if (latestAnswer) return; // don't overwrite streamed answer
+        const now = Date.now();
+        if (now - lastFlush < 120) return;
+        lastFlush = now;
+        windowManager.updateLLMResponseStream(
+          `⏳ ${msg}\n${this.workspacePath}`,
+          streamMeta
+        );
+      },
+      onProgress: (fullText) => {
+        latestAnswer = fullText;
+        const now = Date.now();
+        if (now - lastFlush < 40) return;
+        lastFlush = now;
+        windowManager.updateLLMResponseStream(fullText, streamMeta);
+      },
+    });
+
+    llmResult.metadata = {
+      ...llmResult.metadata,
+      processingTime: Date.now() - started,
+      skill: this.activeSkill,
+      isTranscriptionResponse,
+    };
+
+    sessionManager.addModelResponse(llmResult.response, {
+      skill: this.activeSkill,
+      processingTime: llmResult.metadata.processingTime,
+      provider: "dsh-headless",
+      workspacePath: this.workspacePath,
+      isTranscriptionResponse,
+    });
+
+    windowManager.endLLMResponseStream(llmResult.response, {
+      skill: this.activeSkill,
+      processingTime: llmResult.metadata.processingTime,
+      usedFallback: false,
+      provider: "dsh-headless",
+      isTranscriptionResponse,
+    });
+
+    return llmResult;
+  }
+
   async processWithLLM(text, sessionHistory) {
     try {
       // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
+
+      if (this.shouldUseDsh()) {
+        await this.processWithDsh(text, { isTranscriptionResponse: false });
+        return;
+      }
 
       // Check if current skill needs programming language context
       const skillsRequiringProgrammingLanguage = ['programming', 'dsa', 'devops', 'system-design', 'data-science'];
@@ -793,8 +1004,22 @@ class ApplicationController {
       logger.info("Processing transcription with intelligent LLM response", {
         skill: this.activeSkill,
         textLength: cleanText.length,
-        textPreview: cleanText.substring(0, 100) + "..."
+        textPreview: cleanText.substring(0, 100) + "...",
+        useDsh: this.shouldUseDsh(),
+        workspacePath: this.workspacePath || null
       });
+
+      if (this.shouldUseDsh()) {
+        const llmResult = await this.processWithDsh(cleanText, {
+          isTranscriptionResponse: true
+        });
+        logger.info("Transcription dsh response completed", {
+          responseLength: llmResult.response.length,
+          processingTime: llmResult.metadata.processingTime,
+          workspacePath: this.workspacePath
+        });
+        return;
+      }
 
       // Check if current skill needs programming language context
       const skillsRequiringProgrammingLanguage = ['programming', 'dsa', 'devops', 'system-design', 'data-science'];
@@ -857,8 +1082,16 @@ class ApplicationController {
         text: text ? text.substring(0, 100) : 'undefined'
       });
 
+      windowManager.updateLLMResponseStream(
+        `❌ ${error.message}`,
+        { skill: this.activeSkill, isTranscriptionResponse: true }
+      );
+
       // Try to provide a fallback response
       try {
+        if (typeof llmService.generateIntelligentFallbackResponse !== 'function') {
+          throw error;
+        }
         const fallbackResult = llmService.generateIntelligentFallbackResponse(text, this.activeSkill);
         
         sessionManager.addModelResponse(fallbackResult.response, {
@@ -990,9 +1223,12 @@ class ApplicationController {
   getSettings() {
     return {
       codingLanguage: this.codingLanguage || "javascript",
-      activeSkill: this.activeSkill || "dsa",
+      activeSkill: this.activeSkill || "normal",
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
+      dshEnabled: !!this.dshEnabled,
+      workspacePath: this.workspacePath || "",
+      dshHarnessDir: this.dshHarnessDir || "",
     };
   }
 
@@ -1020,10 +1256,28 @@ class ApplicationController {
         this.updateAppIcon(settings.selectedIcon);
       }
 
+      if (Object.prototype.hasOwnProperty.call(settings, "dshEnabled")) {
+        this.dshEnabled = !!settings.dshEnabled;
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "workspacePath")) {
+        const nextPath = settings.workspacePath || "";
+        if (nextPath !== this.workspacePath) {
+          dshService.clearSession();
+        }
+        this.workspacePath = nextPath;
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "dshHarnessDir")) {
+        this.dshHarnessDir = settings.dshHarnessDir || "";
+      }
+
       // Persist settings to file or config
       this.persistSettings(settings);
 
-      logger.info("Settings saved successfully", settings);
+      logger.info("Settings saved successfully", {
+        ...settings,
+        dshEnabled: this.dshEnabled,
+        workspacePath: this.workspacePath,
+      });
       return { success: true };
     } catch (error) {
       logger.error("Failed to save settings", { error: error.message });
@@ -1031,10 +1285,49 @@ class ApplicationController {
     }
   }
 
+  loadPersistedSettings() {
+    try {
+      if (!fs.existsSync(this.settingsPath)) return;
+      const raw = fs.readFileSync(this.settingsPath, "utf8");
+      const saved = JSON.parse(raw);
+      if (saved.codingLanguage) this.codingLanguage = saved.codingLanguage;
+      if (saved.activeSkill) this.activeSkill = saved.activeSkill;
+      if (saved.appIcon || saved.selectedIcon) {
+        this.appIcon = saved.selectedIcon || saved.appIcon;
+      }
+      if (Object.prototype.hasOwnProperty.call(saved, "dshEnabled")) {
+        this.dshEnabled = !!saved.dshEnabled;
+      }
+      if (saved.workspacePath) this.workspacePath = saved.workspacePath;
+      if (saved.dshHarnessDir) this.dshHarnessDir = saved.dshHarnessDir;
+      logger.info("Loaded persisted settings", {
+        activeSkill: this.activeSkill,
+        dshEnabled: this.dshEnabled,
+        workspacePath: this.workspacePath || null,
+      });
+    } catch (error) {
+      logger.warn("Failed to load persisted settings", { error: error.message });
+    }
+  }
+
   persistSettings(settings) {
-    // You can extend this to save to a file or database
-    // For now, we'll just keep them in memory
-    logger.debug("Settings persisted", settings);
+    try {
+      const dir = path.dirname(this.settingsPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const merged = {
+        ...this.getSettings(),
+        ...settings,
+        dshEnabled: this.dshEnabled,
+        workspacePath: this.workspacePath,
+        dshHarnessDir: this.dshHarnessDir,
+      };
+      fs.writeFileSync(this.settingsPath, JSON.stringify(merged, null, 2), "utf8");
+      logger.debug("Settings persisted", { path: this.settingsPath });
+    } catch (error) {
+      logger.warn("Failed to persist settings", { error: error.message });
+    }
   }
 
   updateAppIcon(iconKey) {

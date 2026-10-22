@@ -56,6 +56,14 @@ class ConfigManager {
         }
       },
 
+      // Workspace Q&A via deepseek-harness `dsh --profile headless`
+      dsh: {
+        enabled: process.env.DSH_ENABLED === '1' || process.env.DSH_ENABLED === 'true',
+        harnessDir: process.env.DSH_HARNESS_DIR || '',
+        bin: process.env.DSH_BIN || '',
+        timeoutMs: Number(process.env.DSH_TIMEOUT_MS || 300000)
+      },
+
       speech: {
         azure: {
           language: 'en-US',

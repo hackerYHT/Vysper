@@ -43,6 +43,28 @@
         backdrop-filter: blur(10px);
         cursor: move;
         flex-shrink: 0;
+        gap: 12px;
+      }
+      .chat-header-actions {
+        display: flex;
+        gap: 8px;
+        -webkit-app-region: no-drag;
+        flex-shrink: 0;
+      }
+      .chat-header-btn {
+        background: rgba(255, 255, 255, 0.12);
+        border: none;
+        border-radius: 6px;
+        padding: 6px 10px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 11px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .chat-header-btn:hover {
+        background: rgba(255, 255, 255, 0.22);
       }
       .header-title {
         color: rgba(255, 255, 255, 0.95);
@@ -616,6 +638,12 @@
           Live Transcription & Chat
           <div class="recording-indicator" id="recordingIndicator"></div>
         </div>
+        <div class="chat-header-actions">
+          <button type="button" class="chat-header-btn" id="newSessionBtn" title="新建会话 (⌘⇧\)">
+            <i class="fas fa-plus"></i>
+            新建会话
+          </button>
+        </div>
       </div>
 
       <!-- Interim Text Overlay -->
@@ -933,9 +961,34 @@
           handleRecordingStopped();
         });
 
-        whysperAPI.onSessionCleared(() => {
-          addMessage('Session memory has been cleared', 'system');
+        whysperAPI.onSessionCleared((event, data) => {
+          // Fresh UI for a new session
+          chatMessages.innerHTML = '';
+          streamingAssistantEl = null;
+          hideThinkingIndicator();
+          const note = (data && data.reason === 'new-session')
+            ? '已新建会话（本地记忆与 dsh 续聊已重置）'
+            : '会话记忆已清空';
+          addMessage(note, 'system');
         });
+
+        const newSessionBtn = document.getElementById('newSessionBtn');
+        if (newSessionBtn) {
+          newSessionBtn.addEventListener('click', async () => {
+            try {
+              newSessionBtn.disabled = true;
+              if (whysperAPI.newSession) {
+                await whysperAPI.newSession();
+              } else if (whysperAPI.clearSessionMemory) {
+                await whysperAPI.clearSessionMemory();
+              }
+            } catch (err) {
+              addMessage(`新建会话失败: ${err.message || err}`, 'error');
+            } finally {
+              newSessionBtn.disabled = false;
+            }
+          });
+        }
 
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
           if (data && data.response) {

@@ -119,8 +119,18 @@ class ChatWindowUI {
             });
             
             // Session handlers
-            window.electronAPI.onSessionCleared(() => {
-                this.addMessage('Session memory has been cleared', 'system');
+            window.electronAPI.onSessionCleared((event, data) => {
+                if (this.messagesContainer) {
+                    this.messagesContainer.innerHTML = '';
+                }
+                this.streamingAssistantEl = null;
+                if (typeof this.hideThinkingIndicator === 'function') {
+                    this.hideThinkingIndicator();
+                }
+                const note = (data && data.reason === 'new-session')
+                    ? '已新建会话（本地记忆与 dsh 续聊已重置）'
+                    : '会话记忆已清空';
+                this.addMessage(note, 'system');
             });
             
             window.electronAPI.onOcrCompleted((event, data) => {

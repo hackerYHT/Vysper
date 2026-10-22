@@ -886,6 +886,19 @@ class MainWindowUI {
             document.body.removeChild(menu);
         });
 
+        const newSessionOption = this.createMenuItem('新建会话', 'fa-plus', async () => {
+            document.body.removeChild(menu);
+            try {
+                if (window.electronAPI?.newSession) {
+                    await window.electronAPI.newSession();
+                } else if (window.electronAPI?.clearSessionMemory) {
+                    await window.electronAPI.clearSessionMemory();
+                }
+            } catch (error) {
+                console.error('Failed to create new session:', error);
+            }
+        });
+
         const quitOption = this.createMenuItem('Quit Vysper', 'fa-power-off', () => {
             if (window.electronAPI) {
                 window.electronAPI.quitApp();
@@ -893,6 +906,7 @@ class MainWindowUI {
         });
 
         menu.appendChild(settingsOption);
+        menu.appendChild(newSessionOption);
         menu.appendChild(this.createMenuSeparator());
         menu.appendChild(quitOption);
 

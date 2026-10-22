@@ -8,7 +8,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
+    const dshEnabledInput = document.getElementById('dshEnabled');
+    const workspacePathLabel = document.getElementById('workspacePathLabel');
+    const pickWorkspaceBtn = document.getElementById('pickWorkspaceBtn');
+    const clearWorkspaceBtn = document.getElementById('clearWorkspaceBtn');
+    const dshHarnessDirInput = document.getElementById('dshHarnessDir');
+    const newSessionBtn = document.getElementById('newSessionBtn');
     const iconGrid = document.getElementById('iconGrid');
+    let workspacePath = '';
 
     // Check if window.api exists
     if (!window.api) {
@@ -68,6 +75,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (settings.windowGap && windowGapInput) windowGapInput.value = settings.windowGap;
         if (settings.codingLanguage && codingLanguageSelect) codingLanguageSelect.value = settings.codingLanguage;
         if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;
+        if (dshEnabledInput) dshEnabledInput.checked = !!settings.dshEnabled;
+        workspacePath = settings.workspacePath || '';
+        if (workspacePathLabel) {
+            workspacePathLabel.textContent = workspacePath || '未选择';
+        }
+        if (dshHarnessDirInput) dshHarnessDirInput.value = settings.dshHarnessDir || '';
         
         // Handle icon selection
         const selectedIcon = settings.selectedIcon || settings.appIcon;
@@ -104,9 +117,86 @@ document.addEventListener('DOMContentLoaded', () => {
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
+        if (dshEnabledInput) settings.dshEnabled = dshEnabledInput.checked;
+        settings.workspacePath = workspacePath || '';
+        if (dshHarnessDirInput) settings.dshHarnessDir = dshHarnessDirInput.value.trim();
         
-        window.api.send('save-settings', settings);
+        if (window.electronAPI && window.electronAPI.saveSettings) {
+            window.electronAPI.saveSettings(settings);
+        } else {
+            window.api.send('save-settings', settings);
+        }
     };
+
+    if (dshEnabledInput) {
+        dshEnabledInput.addEventListener('change', saveSettings);
+    }
+    if (dshHarnessDirInput) {
+        dshHarnessDirInput.addEventListener('change', saveSettings);
+        dshHarnessDirInput.addEventListener('blur', saveSettings);
+    }
+    if (pickWorkspaceBtn) {
+        pickWorkspaceBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!window.electronAPI || !window.electronAPI.pickWorkspaceDirectory) {
+                console.error('pickWorkspaceDirectory API unavailable');
+                if (workspacePathLabel) {
+                    workspacePathLabel.textContent = '选择目录 API 不可用，请重启应用';
+                }
+                return;
+            }
+            try {
+                pickWorkspaceBtn.disabled = true;
+                pickWorkspaceBtn.textContent = '选择中…';
+                const result = await window.electronAPI.pickWorkspaceDirectory();
+                if (result && result.path) {
+                    workspacePath = result.path;
+                    if (workspacePathLabel) workspacePathLabel.textContent = workspacePath;
+                    if (dshEnabledInput && !dshEnabledInput.checked) {
+                        dshEnabledInput.checked = true;
+                    }
+                    saveSettings();
+                }
+            } catch (error) {
+                console.error('Failed to pick workspace:', error);
+                if (workspacePathLabel) {
+                    workspacePathLabel.textContent = `选择失败: ${error.message || error}`;
+                }
+            } finally {
+                pickWorkspaceBtn.disabled = false;
+                pickWorkspaceBtn.textContent = '选择目录';
+            }
+        });
+    }
+    if (clearWorkspaceBtn) {
+        clearWorkspaceBtn.addEventListener('click', () => {
+            workspacePath = '';
+            if (workspacePathLabel) workspacePathLabel.textContent = '未选择';
+            saveSettings();
+        });
+    }
+    if (newSessionBtn) {
+        newSessionBtn.addEventListener('click', async () => {
+            try {
+                newSessionBtn.disabled = true;
+                newSessionBtn.textContent = '处理中…';
+                const api = window.electronAPI;
+                const result = api?.newSession
+                    ? await api.newSession()
+                    : await api?.clearSessionMemory?.();
+                newSessionBtn.textContent = result?.success === false ? '失败' : '已新建';
+                setTimeout(() => {
+                    newSessionBtn.disabled = false;
+                    newSessionBtn.textContent = '新建会话';
+                }, 1200);
+            } catch (error) {
+                console.error('Failed to create new session:', error);
+                newSessionBtn.disabled = false;
+                newSessionBtn.textContent = '新建会话';
+            }
+        });
+    }
 
     // Add event listeners for all inputs
     const inputs = [

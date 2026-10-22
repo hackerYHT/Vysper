@@ -69,6 +69,14 @@
             overflow-y: auto;
             color: rgba(255, 255, 255, 0.9);
             max-height: calc(100vh - 70px);
+            -webkit-app-region: no-drag;
+        }
+
+        .settings-content button,
+        .settings-content input,
+        .settings-content select,
+        .settings-content label {
+            -webkit-app-region: no-drag;
         }
 
         .settings-section {
@@ -328,6 +336,49 @@
                             <option value="negotiation">Negotiation</option>
                             <option value="devops">DevOps & Infrastructure</option>
                         </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <div class="settings-section-title">
+                    <i class="fas fa-folder-open"></i>
+                    Workspace（dsh 代码问答）
+                </div>
+                <div class="settings-section-content">
+                    <div class="settings-item">
+                        <div>
+                            <div class="settings-item-label">启用 dsh 工作区问答</div>
+                            <div class="settings-item-description">选中目录后，语音/聊天会调用 deepseek-harness 的 dsh headless 基于仓库回答</div>
+                        </div>
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                            <input type="checkbox" id="dshEnabled" style="width:16px;height:16px;">
+                            <span style="font-size:12px;color:rgba(255,255,255,0.8);">启用</span>
+                        </label>
+                    </div>
+                    <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                            <div>
+                                <div class="settings-item-label">工作区目录</div>
+                                <div class="settings-item-description" id="workspacePathLabel">未选择</div>
+                            </div>
+                            <div style="display:flex;gap:8px;flex-shrink:0;">
+                                <button type="button" class="btn" id="pickWorkspaceBtn">选择目录</button>
+                                <button type="button" class="btn" id="clearWorkspaceBtn">清除</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+                        <div class="settings-item-label">Harness 仓库路径（可选）</div>
+                        <div class="settings-item-description">本地 deepseek-harness 目录；留空则用 PATH 上的 dsh 或默认 ~/PythonProjects/deepseek-harness</div>
+                        <input type="text" class="input-field" id="dshHarnessDir" placeholder="/path/to/deepseek-harness" style="max-width:100%;">
+                    </div>
+                    <div class="settings-item">
+                        <div>
+                            <div class="settings-item-label">会话</div>
+                            <div class="settings-item-description">新建会话会清空本地对话记忆，并断开 dsh 续聊（⌘⇧\）</div>
+                        </div>
+                        <button type="button" class="btn" id="newSessionBtn">新建会话</button>
                     </div>
                 </div>
             </div>

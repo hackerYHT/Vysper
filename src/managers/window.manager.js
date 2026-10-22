@@ -52,8 +52,8 @@ class WindowManager {
         alwaysOnTop: true
       },
       settings: {
-        width: 400,
-        height: 380,
+        width: 420,
+        height: 560,
         file: 'settings.html',
         title: 'Settings',
         frame: false,
@@ -1213,17 +1213,28 @@ class WindowManager {
     if (this.isScreenBeingShared) return;
 
     const settingsWindow = this.windows.get('settings');
-    if (settingsWindow) {
-      this.showOnCurrentDesktop(settingsWindow);
-      this.centerWindow(settingsWindow); // This now positions at top-center
-      
-      // Notify that settings window is shown
-      setTimeout(() => {
-        settingsWindow.webContents.send('settings-window-shown');
-      }, 50);
-      
-      logger.info('Settings window displayed at top');
+    if (!settingsWindow || settingsWindow.isDestroyed()) return;
+
+    // Avoid showOnCurrentDesktop hide/show dance — it makes settings flicker.
+    if (!settingsWindow.isVisible()) {
+      this.centerWindow(settingsWindow);
+      if (process.platform === 'darwin') {
+        this._setMacOSAlwaysOnTop(settingsWindow);
+      } else {
+        settingsWindow.setAlwaysOnTop(true);
+      }
+      settingsWindow.show();
+    } else {
+      settingsWindow.focus();
     }
+
+    setTimeout(() => {
+      if (!settingsWindow.isDestroyed()) {
+        settingsWindow.webContents.send('settings-window-shown');
+      }
+    }, 50);
+
+    logger.info('Settings window displayed');
   }
 
   hideSettings() {
