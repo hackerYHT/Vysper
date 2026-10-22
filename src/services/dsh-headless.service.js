@@ -15,6 +15,7 @@ class DshHeadlessService {
   constructor() {
     this.activeChild = null;
     this.sessionId = null;
+    this.cancelRequested = false;
   }
 
   isAvailable(options = {}) {
@@ -85,9 +86,13 @@ class DshHeadlessService {
   }
 
   cancel() {
+    this.cancelRequested = true;
     if (this.activeChild && !this.activeChild.killed) {
       try {
         this.activeChild.kill('SIGTERM');
+      } catch (_) { /* ignore */ }
+      try {
+        this.activeChild.kill('SIGKILL');
       } catch (_) { /* ignore */ }
     }
     this.activeChild = null;
@@ -145,7 +150,12 @@ class DshHeadlessService {
       timeoutMs
     });
 
-    this.cancel();
+    // Kill any previous run, then start a fresh cancellable request
+    if (this.activeChild) {
+      try { this.activeChild.kill('SIGTERM'); } catch (_) { /* ignore */ }
+      this.activeChild = null;
+    }
+    this.cancelRequested = false;
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -268,6 +278,25 @@ class DshHeadlessService {
         if (stdoutBuf.trim()) handleLine(stdoutBuf);
 
         const answer = (finalText || accumulatedText || '').trim();
+        const cancelled = this.cancelRequested;
+
+        if (cancelled) {
+          finish(null, {
+            response: answer ? `${answer}\n\n（已中断）` : '（已中断）',
+            metadata: {
+              provider: 'dsh-headless',
+              workspacePath,
+              sessionId: this.sessionId,
+              exitCode: code,
+              processingTime: null,
+              usedFallback: false,
+              streamed: true,
+              cancelled: true
+            }
+          });
+          return;
+        }
+
         if (code !== 0 && !answer) {
           const detail = lastError?.message
             || stderrBuf.split(/\r?\n/).filter(l => l.includes('dsh:')).slice(-3).join(' ')
@@ -291,7 +320,8 @@ class DshHeadlessService {
             exitCode: code,
             processingTime: null,
             usedFallback: false,
-            streamed: true
+            streamed: true,
+            cancelled: false
           }
         });
       });

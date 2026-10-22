@@ -670,6 +670,10 @@
           <div class="recording-indicator" id="recordingIndicator"></div>
         </div>
         <div class="chat-header-actions">
+          <button type="button" class="chat-header-btn" id="stopGenerationBtn" title="停止回答 (Esc)" style="display:none;background:rgba(244,67,54,0.35);">
+            <i class="fas fa-stop"></i>
+            停止
+          </button>
           <button type="button" class="chat-header-btn" id="newSessionBtn" title="新建会话 (⌘⇧\)">
             <i class="fas fa-plus"></i>
             新建会话
@@ -1009,6 +1013,7 @@
         });
 
         const newSessionBtn = document.getElementById('newSessionBtn');
+        const stopGenerationBtn = document.getElementById('stopGenerationBtn');
         if (newSessionBtn) {
           newSessionBtn.addEventListener('click', async () => {
             try {
@@ -1024,6 +1029,27 @@
               newSessionBtn.disabled = false;
             }
           });
+        }
+        if (stopGenerationBtn) {
+          stopGenerationBtn.addEventListener('click', async () => {
+            try {
+              if (whysperAPI.cancelGeneration) {
+                await whysperAPI.cancelGeneration();
+              }
+            } catch (err) {
+              addMessage(`停止失败: ${err.message || err}`, 'error');
+            }
+          });
+          if (whysperAPI.onGenerationStarted) {
+            whysperAPI.onGenerationStarted(() => {
+              stopGenerationBtn.style.display = 'flex';
+            });
+          }
+          if (whysperAPI.onGenerationEnded) {
+            whysperAPI.onGenerationEnded(() => {
+              stopGenerationBtn.style.display = 'none';
+            });
+          }
         }
 
         whysperAPI.onTranscriptionLlmResponse((event, data) => {

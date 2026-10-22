@@ -18,7 +18,22 @@ class DeepSeekLLMService {
     this.apiKey = null;
     this.baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
     this.model = process.env.DEEPSEEK_MODEL || config.get('llm.deepseek.model') || 'deepseek-flash';
+    this.activeReq = null;
+    this.cancelRequested = false;
     this.initializeClient();
+  }
+
+  /**
+   * Abort in-flight DeepSeek HTTP stream/request.
+   */
+  cancel() {
+    this.cancelRequested = true;
+    if (this.activeReq) {
+      try {
+        this.activeReq.destroy();
+      } catch (_) { /* ignore */ }
+      this.activeReq = null;
+    }
   }
 
   initializeClient() {
@@ -95,16 +110,22 @@ class DeepSeekLLMService {
         ? await this.chatCompletionsStream(messages, onDelta)
         : await this.chatCompletions(messages);
 
+      const cancelled = this.cancelRequested;
+      const finalText = cancelled
+        ? (response ? `${response}\n\n（已中断）` : '（已中断）')
+        : response;
+
       logger.logPerformance('DeepSeek text processing', startTime, {
         activeSkill,
         textLength: text.length,
-        responseLength: response.length,
+        responseLength: finalText.length,
         requestId: this.requestCount,
-        streamed: !!onDelta
+        streamed: !!onDelta,
+        cancelled
       });
 
       return {
-        response,
+        response: finalText,
         metadata: {
           skill: activeSkill,
           programmingLanguage,
@@ -113,7 +134,8 @@ class DeepSeekLLMService {
           provider: 'deepseek',
           model: this.model,
           usedFallback: false,
-          streamed: !!onDelta
+          streamed: !!onDelta,
+          cancelled
         }
       };
     } catch (error) {
@@ -149,9 +171,15 @@ class DeepSeekLLMService {
         ? await this.chatCompletionsStream(messages, onDelta)
         : await this.chatCompletions(messages);
 
+      const cancelled = this.cancelRequested;
+      const finalText = cancelled
+        ? (response ? `${response}\n\n（已中断）` : '（已中断）')
+        : response;
+
       return {
-        response,
+        response: finalText,
         metadata: {
+          cancelled,
           skill: activeSkill,
           programmingLanguage,
           processingTime: Date.now() - startTime,
@@ -358,6 +386,7 @@ class DeepSeekLLMService {
     });
 
     const url = this._requestUrl();
+    this.cancelRequested = false;
 
     return new Promise((resolve, reject) => {
       let fullText = '';
@@ -367,8 +396,22 @@ class DeepSeekLLMService {
       const finish = (err, text) => {
         if (settled) return;
         settled = true;
+        if (this.activeReq === req) this.activeReq = null;
         if (err) reject(err);
         else resolve(text);
+      };
+
+      const finishCancelledOrEmpty = () => {
+        const text = fullText.trim();
+        if (this.cancelRequested) {
+          finish(null, text);
+          return;
+        }
+        if (!text) {
+          finish(new Error('Empty streamed response from DeepSeek'));
+          return;
+        }
+        finish(null, text);
       };
 
       const req = https.request(
@@ -386,6 +429,10 @@ class DeepSeekLLMService {
               errBody += c;
             });
             res.on('end', () => {
+              if (this.cancelRequested) {
+                finishCancelledOrEmpty();
+                return;
+              }
               finish(new Error(`DeepSeek HTTP ${res.statusCode}: ${errBody.slice(0, 400)}`));
             });
             return;
@@ -393,6 +440,10 @@ class DeepSeekLLMService {
 
           res.setEncoding('utf8');
           res.on('data', (chunk) => {
+            if (this.cancelRequested) {
+              try { res.destroy(); } catch (_) { /* ignore */ }
+              return;
+            }
             buffer += chunk;
             const parts = buffer.split('\n');
             buffer = parts.pop() || '';
@@ -422,24 +473,28 @@ class DeepSeekLLMService {
             }
           });
 
-          res.on('end', () => {
-            const text = fullText.trim();
-            if (!text) {
-              finish(new Error('Empty streamed response from DeepSeek'));
-              return;
-            }
-            finish(null, text);
+          res.on('end', () => finishCancelledOrEmpty());
+          res.on('error', (error) => {
+            if (this.cancelRequested) finishCancelledOrEmpty();
+            else finish(error);
           });
-
-          res.on('error', (error) => finish(error));
         }
       );
 
+      this.activeReq = req;
+
       req.on('timeout', () => {
         req.destroy();
+        if (this.cancelRequested) {
+          finishCancelledOrEmpty();
+          return;
+        }
         finish(new Error(`DeepSeek stream timeout (>${config.get('llm.deepseek.timeout') || 60000}ms)`));
       });
-      req.on('error', (error) => finish(error));
+      req.on('error', (error) => {
+        if (this.cancelRequested) finishCancelledOrEmpty();
+        else finish(error);
+      });
       req.write(body);
       req.end();
     });

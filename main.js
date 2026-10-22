@@ -26,6 +26,7 @@ class ApplicationController {
     this.workspacePath = "";
     this.dshHarnessDir = config.get("dsh.harnessDir") || "";
     this.settingsPath = path.join(config.get("app.dataDir"), "settings.json");
+    this.isGenerating = false;
 
     // Window configurations for reference
     this.windowConfigs = {
@@ -155,7 +156,7 @@ class ApplicationController {
   setupServiceEventHandlers() {
     speechService.on("recording-started", () => {
       windowManager.handleRecordingStarted();
-      this.registerEscapeToStopVoice();
+      this.registerEscapeHandler();
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-started");
       });
@@ -163,7 +164,12 @@ class ApplicationController {
 
     speechService.on("recording-stopped", () => {
       windowManager.handleRecordingStopped();
-      this.unregisterEscapeToStopVoice();
+      // Keep Esc if AI is still generating; otherwise release it
+      if (this.isGenerating) {
+        this.registerEscapeHandler();
+      } else {
+        this.unregisterEscapeHandler();
+      }
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-stopped");
       });
@@ -315,6 +321,10 @@ class ApplicationController {
 
     ipcMain.handle("new-session", () => {
       return this.newSession({ source: "ipc-new" });
+    });
+
+    ipcMain.handle("cancel-generation", () => {
+      return this.cancelGeneration("ipc");
     });
 
     ipcMain.handle("force-always-on-top", () => {
@@ -617,11 +627,11 @@ class ApplicationController {
       }
       windowManager.showChatWindow();
       speechService.startRecording();
-      this.registerEscapeToStopVoice();
+      this.registerEscapeHandler();
       logger.info("Voice input started", { source });
     } catch (error) {
       logger.error("Error starting voice input", { error: error.message, source });
-      this.unregisterEscapeToStopVoice();
+      this.unregisterEscapeHandler();
     }
   }
 
@@ -632,31 +642,81 @@ class ApplicationController {
         speechService.stopRecording();
       }
       // Keep chat open so the answer can stream in
-      this.unregisterEscapeToStopVoice();
+      if (!this.isGenerating) {
+        this.unregisterEscapeHandler();
+      }
       logger.info("Voice input stopped", { source });
     } catch (error) {
       logger.error("Error stopping voice input", { error: error.message, source });
-      this.unregisterEscapeToStopVoice();
+      if (!this.isGenerating) {
+        this.unregisterEscapeHandler();
+      }
     }
   }
 
-  registerEscapeToStopVoice() {
+  /**
+   * Esc: stop voice if recording, else cancel in-flight AI answer.
+   */
+  handleEscape() {
+    const recording = speechService.getStatus()?.isRecording;
+    if (recording) {
+      this.stopVoiceInput("escape");
+      return { action: "stop-voice" };
+    }
+    if (this.isGenerating) {
+      return this.cancelGeneration("escape");
+    }
+    return { action: "none" };
+  }
+
+  registerEscapeHandler() {
     try {
-      // Only steal Esc while recording, so other apps keep Esc otherwise
       globalShortcut.unregister("Escape");
       const ok = globalShortcut.register("Escape", () => {
-        this.stopVoiceInput("escape");
+        this.handleEscape();
       });
-      logger.debug("Escape shortcut for voice stop", { success: ok });
+      logger.debug("Escape handler registered", { success: ok });
     } catch (error) {
-      logger.warn("Failed to register Escape for voice stop", { error: error.message });
+      logger.warn("Failed to register Escape handler", { error: error.message });
     }
   }
 
-  unregisterEscapeToStopVoice() {
+  unregisterEscapeHandler() {
     try {
       globalShortcut.unregister("Escape");
     } catch (_) { /* ignore */ }
+  }
+
+  beginGeneration() {
+    this.isGenerating = true;
+    this.registerEscapeHandler();
+    windowManager.broadcastToAllWindows("generation-started");
+  }
+
+  endGeneration() {
+    this.isGenerating = false;
+    const recording = speechService.getStatus()?.isRecording;
+    if (!recording) {
+      this.unregisterEscapeHandler();
+    }
+    windowManager.broadcastToAllWindows("generation-ended");
+  }
+
+  cancelGeneration(source = "unknown") {
+    if (!this.isGenerating) {
+      return { success: false, reason: "not-generating" };
+    }
+    try {
+      if (typeof llmService.cancel === "function") {
+        llmService.cancel();
+      }
+      dshService.cancel();
+      logger.info("AI generation cancel requested", { source });
+      return { success: true, source };
+    } catch (error) {
+      logger.error("Failed to cancel generation", { error: error.message, source });
+      return { success: false, error: error.message };
+    }
   }
 
   clearSessionMemory() {
@@ -668,9 +728,13 @@ class ApplicationController {
    */
   newSession({ source = "unknown" } = {}) {
     try {
+      if (this.isGenerating) {
+        this.cancelGeneration(`new-session:${source}`);
+      }
       dshService.cancel();
       dshService.clearSession();
       sessionManager.clear();
+      this.endGeneration();
 
       const payload = {
         reason: "new-session",
@@ -842,64 +906,70 @@ class ApplicationController {
       isTranscriptionResponse,
     };
 
-    if (!isTranscriptionResponse) {
-      windowManager.showLLMLoading();
+    this.beginGeneration();
+    try {
+      if (!isTranscriptionResponse) {
+        windowManager.showLLMLoading();
+      }
+      windowManager.beginLLMResponseStream(streamMeta);
+      windowManager.updateLLMResponseStream(
+        `正在用 dsh 分析工作区…\n${this.workspacePath}`,
+        streamMeta
+      );
+
+      let lastFlush = 0;
+      let latestAnswer = "";
+      const llmResult = await dshService.ask(text, {
+        workspacePath: this.workspacePath,
+        harnessDir: this.dshHarnessDir || undefined,
+        timeoutMs: config.get("dsh.timeoutMs"),
+        onStatus: (msg) => {
+          if (latestAnswer) return; // don't overwrite streamed answer
+          const now = Date.now();
+          if (now - lastFlush < 120) return;
+          lastFlush = now;
+          windowManager.updateLLMResponseStream(
+            `⏳ ${msg}\n${this.workspacePath}`,
+            streamMeta
+          );
+        },
+        onProgress: (fullText) => {
+          latestAnswer = fullText;
+          const now = Date.now();
+          if (now - lastFlush < 40) return;
+          lastFlush = now;
+          windowManager.updateLLMResponseStream(fullText, streamMeta);
+        },
+      });
+
+      llmResult.metadata = {
+        ...llmResult.metadata,
+        processingTime: Date.now() - started,
+        skill: this.activeSkill,
+        isTranscriptionResponse,
+      };
+
+      sessionManager.addModelResponse(llmResult.response, {
+        skill: this.activeSkill,
+        processingTime: llmResult.metadata.processingTime,
+        provider: "dsh-headless",
+        workspacePath: this.workspacePath,
+        isTranscriptionResponse,
+      });
+
+      windowManager.endLLMResponseStream(llmResult.response, {
+        skill: this.activeSkill,
+        processingTime: llmResult.metadata.processingTime,
+        usedFallback: false,
+        provider: "dsh-headless",
+        cancelled: !!llmResult.metadata.cancelled,
+        isTranscriptionResponse,
+      });
+
+      return llmResult;
+    } finally {
+      this.endGeneration();
     }
-    windowManager.beginLLMResponseStream(streamMeta);
-    windowManager.updateLLMResponseStream(
-      `正在用 dsh 分析工作区…\n${this.workspacePath}`,
-      streamMeta
-    );
-
-    let lastFlush = 0;
-    let latestAnswer = "";
-    const llmResult = await dshService.ask(text, {
-      workspacePath: this.workspacePath,
-      harnessDir: this.dshHarnessDir || undefined,
-      timeoutMs: config.get("dsh.timeoutMs"),
-      onStatus: (msg) => {
-        if (latestAnswer) return; // don't overwrite streamed answer
-        const now = Date.now();
-        if (now - lastFlush < 120) return;
-        lastFlush = now;
-        windowManager.updateLLMResponseStream(
-          `⏳ ${msg}\n${this.workspacePath}`,
-          streamMeta
-        );
-      },
-      onProgress: (fullText) => {
-        latestAnswer = fullText;
-        const now = Date.now();
-        if (now - lastFlush < 40) return;
-        lastFlush = now;
-        windowManager.updateLLMResponseStream(fullText, streamMeta);
-      },
-    });
-
-    llmResult.metadata = {
-      ...llmResult.metadata,
-      processingTime: Date.now() - started,
-      skill: this.activeSkill,
-      isTranscriptionResponse,
-    };
-
-    sessionManager.addModelResponse(llmResult.response, {
-      skill: this.activeSkill,
-      processingTime: llmResult.metadata.processingTime,
-      provider: "dsh-headless",
-      workspacePath: this.workspacePath,
-      isTranscriptionResponse,
-    });
-
-    windowManager.endLLMResponseStream(llmResult.response, {
-      skill: this.activeSkill,
-      processingTime: llmResult.metadata.processingTime,
-      usedFallback: false,
-      provider: "dsh-headless",
-      isTranscriptionResponse,
-    });
-
-    return llmResult;
   }
 
   async processWithLLM(text, sessionHistory) {
@@ -919,9 +989,12 @@ class ApplicationController {
       const streamMeta = { skill: this.activeSkill };
       windowManager.showLLMLoading();
       windowManager.beginLLMResponseStream(streamMeta);
+      this.beginGeneration();
 
       let lastFlush = 0;
-      const llmResult = await llmService.processTextWithSkill(
+      let llmResult;
+      try {
+        llmResult = await llmService.processTextWithSkill(
         text,
         this.activeSkill,
         sessionHistory.recent,
@@ -935,6 +1008,9 @@ class ApplicationController {
           }
         }
       );
+      } finally {
+        this.endGeneration();
+      }
 
       logger.info("LLM processing completed, showing response", {
         responseLength: llmResult.response.length,
@@ -1030,22 +1106,28 @@ class ApplicationController {
         isTranscriptionResponse: true
       };
       windowManager.beginLLMResponseStream(streamMeta);
+      this.beginGeneration();
 
       let lastFlush = 0;
-      const llmResult = await llmService.processTranscriptionWithIntelligentResponse(
-        cleanText,
-        this.activeSkill,
-        sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
-        {
-          onDelta: (_delta, fullText) => {
-            const now = Date.now();
-            if (now - lastFlush < 40) return;
-            lastFlush = now;
-            windowManager.updateLLMResponseStream(fullText, streamMeta);
+      let llmResult;
+      try {
+        llmResult = await llmService.processTranscriptionWithIntelligentResponse(
+          cleanText,
+          this.activeSkill,
+          sessionHistory.recent,
+          needsProgrammingLanguage ? this.codingLanguage : null,
+          {
+            onDelta: (_delta, fullText) => {
+              const now = Date.now();
+              if (now - lastFlush < 40) return;
+              lastFlush = now;
+              windowManager.updateLLMResponseStream(fullText, streamMeta);
+            }
           }
-        }
-      );
+        );
+      } finally {
+        this.endGeneration();
+      }
 
       // Add LLM response to session memory
       sessionManager.addModelResponse(llmResult.response, {
@@ -1059,6 +1141,7 @@ class ApplicationController {
         skill: this.activeSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
+        cancelled: !!llmResult.metadata.cancelled,
         isTranscriptionResponse: true
       });
 

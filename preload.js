@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLLMSessionHistory: () => ipcRenderer.invoke('get-llm-session-history'),
   clearSessionMemory: () => ipcRenderer.invoke('clear-session-memory'),
   newSession: () => ipcRenderer.invoke('new-session'),
+  cancelGeneration: () => ipcRenderer.invoke('cancel-generation'),
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
   sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),
@@ -81,6 +82,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onInteractionModeChanged: (callback) => ipcRenderer.on('interaction-mode-changed', callback),
   onRecordingStarted: (callback) => ipcRenderer.on('recording-started', callback),
   onRecordingStopped: (callback) => ipcRenderer.on('recording-stopped', callback),
+  onGenerationStarted: (callback) => ipcRenderer.on('generation-started', callback),
+  onGenerationEnded: (callback) => ipcRenderer.on('generation-ended', callback),
   
   // Generic receive method
   receive: (channel, callback) => ipcRenderer.on(channel, callback),

@@ -939,6 +939,13 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       req.end();
     });
   }
+
+  /**
+   * Gemini path has no streaming abort yet — stub for shared cancel API.
+   */
+  cancel() {
+    // no-op
+  }
 }
 
 module.exports = new LLMService();
