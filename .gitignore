@@ -3,3 +3,5 @@ node_modules
 eng.traineddata
 dist/
 .DS_Store
+models/*.bin
+models/*.bin.*
