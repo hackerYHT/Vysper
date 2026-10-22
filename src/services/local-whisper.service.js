@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const recorder = require('node-record-lpcm16');
 const logger = require('../core/logger').createServiceLogger('SPEECH_LOCAL');
+const { toSimplified } = require('../utils/zh-simplify');
 
 /**
  * Local speech-to-text via whisper.cpp (no cloud key).
@@ -23,6 +24,9 @@ class LocalWhisperSpeechService extends EventEmitter {
     this.whisperBin = process.env.WHISPER_BIN || 'whisper-cli';
     // auto: better for Chinese + English proper nouns (Istio, Kubernetes, …)
     this.language = process.env.WHISPER_LANGUAGE || 'auto';
+    // Bias decoder toward Simplified Chinese (Whisper often emits 繁体 otherwise)
+    this.initialPrompt = process.env.WHISPER_INITIAL_PROMPT
+      || '以下是简体中文的内容。';
     this.modelPath = this.resolveModelPath();
     this.sampleRate = 16000;
     // Decoding quality (whisper.cpp beam search)
@@ -247,11 +251,15 @@ class LocalWhisperSpeechService extends EventEmitter {
         '-nt',
         '-np'
       ];
+      if (this.initialPrompt) {
+        args.push('--prompt', this.initialPrompt);
+      }
 
       logger.info('Running whisper-cli', {
         model: path.basename(this.modelPath),
         language: this.language,
-        beamSize: this.beamSize
+        beamSize: this.beamSize,
+        hasPrompt: !!this.initialPrompt
       });
 
       const child = spawn(this.whisperBin, args, {
@@ -304,6 +312,18 @@ class LocalWhisperSpeechService extends EventEmitter {
         if (junkPatterns.some((re) => re.test(text.replace(/\s+/g, '')))) {
           logger.warn('Discarding likely hallucinated transcription', { text });
           text = '';
+        }
+
+        // Whisper frequently emits Traditional Chinese — normalize to Simplified
+        if (text) {
+          const simplified = toSimplified(text);
+          if (simplified !== text) {
+            logger.debug('Converted transcription to Simplified Chinese', {
+              before: text.slice(0, 80),
+              after: simplified.slice(0, 80)
+            });
+          }
+          text = simplified;
         }
 
         resolve(text);

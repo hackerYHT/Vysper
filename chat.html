@@ -168,11 +168,37 @@
       }
       
       .message.assistant .message-text {
-        /* Removed all height restrictions and overflow hidden */
-        white-space: pre-wrap;
+        /* HTML from markdown — not raw preformatted text */
+        white-space: normal;
         word-wrap: break-word;
         word-break: break-word;
         overflow-wrap: break-word;
+      }
+
+      .message.assistant.streaming .message-text {
+        /* While streaming incomplete MD, keep readable line breaks */
+        white-space: normal;
+      }
+
+      .message.assistant .message-text table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 8px 0;
+        font-size: 12px;
+      }
+      .message.assistant .message-text th,
+      .message.assistant .message-text td {
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 4px 8px;
+        text-align: left;
+      }
+      .message.assistant .message-text a {
+        color: #64b5f6;
+      }
+      .message.assistant .message-text hr {
+        border: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
+        margin: 12px 0;
       }
       
       /* Ensure all content in assistant messages is fully visible */
@@ -368,14 +394,19 @@
       .message-text {
         color: rgba(255, 255, 255, 0.95);
         font-size: 13px;
-        line-height: 1.4;
+        line-height: 1.5;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         word-wrap: break-word;
         word-break: break-word;
-        white-space: pre-wrap;
         overflow-wrap: break-word;
         max-width: 100%;
         display: block;
+      }
+      .message.user .message-text,
+      .message.system .message-text,
+      .message.transcription .message-text,
+      .message.error .message-text {
+        white-space: pre-wrap;
       }
       .chat-input {
         padding: 16px 20px;
@@ -668,7 +699,7 @@
         </div>
       </div>
     </div>
-    <script src="lib/markdown.js"></script> 
+    <script src="lib/marked.min.js"></script>
     <script>
       // Use electronAPI from preload script instead of direct require
       const whysperAPI = window.electronAPI;
@@ -688,6 +719,10 @@
       let listeningStartTime = null;
       let listeningTimer = null;
       let streamingAssistantEl = null;
+
+      if (typeof marked !== 'undefined' && typeof marked.setOptions === 'function') {
+        marked.setOptions({ gfm: true, breaks: true, pedantic: false });
+      }
 
       function ensureStreamingAssistant() {
         if (streamingAssistantEl && streamingAssistantEl.isConnected) return;
@@ -712,11 +747,10 @@
         }
         const textDiv = streamingAssistantEl.querySelector('.message-text');
         if (!textDiv) return;
+        // Always render as markdown (including mid-stream) so **bold**/lists show correctly
+        textDiv.innerHTML = formatMarkdown(text || '');
         if (finalize) {
-          textDiv.innerHTML = formatMarkdown(text);
           streamingAssistantEl.classList.remove('streaming');
-        } else {
-          textDiv.textContent = text;
         }
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
@@ -767,27 +801,29 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
 
-      // Markdown formatter using markdown.js library
+      // Markdown via marked (GFM: fences, lists, tables, …)
       function formatMarkdown(text) {
         if (!text) return '';
-        
         try {
-          // Use the markdown.js library for proper markdown parsing
-          if (typeof markdown !== 'undefined' && markdown.toHTML) {
-            return markdown.toHTML(text);
-          } else {
-            console.warn('Markdown library not loaded, falling back to basic formatting');
-            // Fallback to basic formatting if library fails to load
-            return text
-              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-              .replace(/\*(.+?)\*/g, '<em>$1</em>')
-              .replace(/`(.+?)`/g, '<code>$1</code>')
-              .replace(/\n/g, '<br>');
+          if (typeof marked !== 'undefined') {
+            const parse = marked.parse || marked;
+            return typeof parse === 'function' ? parse(String(text)) : String(text);
           }
+          console.warn('marked not loaded, falling back to basic formatting');
+          return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`(.+?)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
         } catch (error) {
           console.error('Markdown parsing failed:', error);
-          // Fallback to basic HTML escaping
-          return text.replace(/\n/g, '<br>');
+          return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
         }
       }
 

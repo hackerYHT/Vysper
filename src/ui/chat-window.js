@@ -394,12 +394,10 @@ class ChatWindowUI {
         const textDiv = this.streamingAssistantEl.querySelector('.message-text');
         if (!textDiv) return;
 
+        textDiv.innerHTML = this.formatMarkdown(text || '');
         if (finalize) {
-            textDiv.innerHTML = this.formatMarkdown(text);
             this.streamingAssistantEl.classList.remove('streaming');
             delete this.streamingAssistantEl.dataset.streaming;
-        } else {
-            textDiv.textContent = text;
         }
         this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
     }
@@ -438,44 +436,41 @@ class ChatWindowUI {
 
     formatMarkdown(text) {
         if (!text) return '';
-        
+
         try {
-            // Use the markdown.js library for proper markdown parsing
-            // Try to access markdown library in different contexts
-            let markdownLib;
-            
-            // First try global markdown object (from script tag)
-            if (typeof markdown !== 'undefined' && markdown.toHTML) {
-                markdownLib = markdown;
-            }
-            // Then try require (Node.js context)
-            else if (typeof require !== 'undefined') {
-                try {
-                    markdownLib = require('markdown');
-                } catch (requireError) {
-                    logger.debug('Could not require markdown library:', requireError.message);
+            if (typeof marked !== 'undefined') {
+                if (typeof marked.setOptions === 'function' && !this._markedConfigured) {
+                    marked.setOptions({ gfm: true, breaks: true, pedantic: false });
+                    this._markedConfigured = true;
+                }
+                const parse = marked.parse || marked;
+                if (typeof parse === 'function') {
+                    return parse(String(text));
                 }
             }
-            // Finally try window.markdown (browser context)
-            else if (typeof window !== 'undefined' && window.markdown) {
-                markdownLib = window.markdown;
+
+            if (typeof require !== 'undefined') {
+                try {
+                    const { marked: markedNode } = require('marked');
+                    return markedNode.parse(String(text));
+                } catch (_) { /* ignore */ }
             }
-            
-            if (markdownLib && markdownLib.toHTML) {
-                return markdownLib.toHTML(text);
-            } else {
-                logger.warn('Markdown library not available, falling back to basic formatting');
-                // Fallback to basic formatting
-                return text
-                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                    .replace(/`(.+?)`/g, '<code>$1</code>')
-                    .replace(/\n/g, '<br>');
-            }
+
+            logger.warn('marked not available, falling back to basic formatting');
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/`(.+?)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>');
         } catch (error) {
             logger.warn('Failed to parse markdown, falling back to plain text', { error: error.message });
-            // Fallback to basic formatting
-            return text.replace(/\n/g, '<br>');
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
         }
     }
 

@@ -2,6 +2,7 @@ const { BrowserWindow, screen, desktopCapturer } = require('electron');
 const path = require('path');
 const logger = require('../core/logger').createServiceLogger('WINDOW');
 const config = require('../core/config');
+const { toSimplified } = require('../utils/zh-simplify');
 
 class WindowManager {
   constructor() {
@@ -1147,7 +1148,7 @@ class WindowManager {
 
     this.broadcastToAllWindows('llm-response-stream', {
       phase: 'delta',
-      content,
+      content: toSimplified(content),
       metadata,
       skill: metadata.skill,
       timestamp: new Date().toISOString()
@@ -1157,9 +1158,10 @@ class WindowManager {
   endLLMResponseStream(content, metadata = {}) {
     if (this.isScreenBeingShared) return;
 
+    const simplified = toSimplified(content);
     this.broadcastToAllWindows('llm-response-stream', {
       phase: 'done',
-      content,
+      content: simplified,
       metadata,
       skill: metadata.skill,
       timestamp: new Date().toISOString()
@@ -1168,7 +1170,7 @@ class WindowManager {
     // Screenshot / OCR → finalize in answer window.
     // Voice transcription → stay in chat only (do not pop a second window).
     if (!metadata.isTranscriptionResponse) {
-      this.showLLMResponse(content, metadata);
+      this.showLLMResponse(simplified, metadata);
     } else {
       // Chat should already be visible from recording/stream start — avoid re-show flicker
       const chatWindow = this.windows.get('chat');
