@@ -352,13 +352,18 @@ When providing technical examples or code-related advice, use ${languageTitle} a
    * @returns {string} Normalized skill name
    */
   normalizeSkillName(skillName) {
-    if (!skillName) return 'general';
+    if (!skillName) return 'normal';
     
     // Convert to lowercase and handle common variations
     const normalized = skillName.toLowerCase().trim();
     
     // Map common variations to standard names
     const skillMap = {
+      'normal': 'normal',
+      'general': 'normal',
+      'chat': 'normal',
+      'qa': 'normal',
+      'default': 'normal',
       'dsa': 'dsa',
       'data-structures': 'dsa',
       'algorithms': 'dsa',

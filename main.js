@@ -16,7 +16,7 @@ const sessionManager = require("./src/managers/session.manager");
 class ApplicationController {
   constructor() {
     this.isReady = false;
-    this.activeSkill = "dsa";
+    this.activeSkill = "normal";
 
     // Window configurations for reference
     this.windowConfigs = {
@@ -141,12 +141,14 @@ class ApplicationController {
 
   setupServiceEventHandlers() {
     speechService.on("recording-started", () => {
+      windowManager.handleRecordingStarted();
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-started");
       });
     });
 
     speechService.on("recording-stopped", () => {
+      windowManager.handleRecordingStopped();
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-stopped");
       });
@@ -600,6 +602,7 @@ class ApplicationController {
 
   navigateSkill(direction) {
     const availableSkills = [
+      "normal",
       "programming",
       "dsa",
       "system-design",
@@ -701,12 +704,25 @@ class ApplicationController {
       // Check if current skill needs programming language context
       const skillsRequiringProgrammingLanguage = ['programming', 'dsa', 'devops', 'system-design', 'data-science'];
       const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-      
+
+      const streamMeta = { skill: this.activeSkill };
+      windowManager.showLLMLoading();
+      windowManager.beginLLMResponseStream(streamMeta);
+
+      let lastFlush = 0;
       const llmResult = await llmService.processTextWithSkill(
         text,
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null
+        needsProgrammingLanguage ? this.codingLanguage : null,
+        {
+          onDelta: (_delta, fullText) => {
+            const now = Date.now();
+            if (now - lastFlush < 40) return;
+            lastFlush = now;
+            windowManager.updateLLMResponseStream(fullText, streamMeta);
+          }
+        }
       );
 
       logger.info("LLM processing completed, showing response", {
@@ -724,13 +740,16 @@ class ApplicationController {
         usedFallback: llmResult.metadata.usedFallback,
       });
 
-      windowManager.showLLMResponse(llmResult.response, {
+      windowManager.endLLMResponseStream(llmResult.response, {
         skill: this.activeSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
       });
 
-      this.broadcastLLMSuccess(llmResult);
+      // Avoid duplicate chat messages when stream already delivered the answer
+      if (!llmResult.metadata?.streamed) {
+        this.broadcastLLMSuccess(llmResult);
+      }
     } catch (error) {
       logger.error("LLM processing failed", {
         error: error.message,
@@ -781,11 +800,26 @@ class ApplicationController {
       const skillsRequiringProgrammingLanguage = ['programming', 'dsa', 'devops', 'system-design', 'data-science'];
       const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
 
+      const streamMeta = {
+        skill: this.activeSkill,
+        isTranscriptionResponse: true
+      };
+      windowManager.beginLLMResponseStream(streamMeta);
+
+      let lastFlush = 0;
       const llmResult = await llmService.processTranscriptionWithIntelligentResponse(
         cleanText,
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null
+        needsProgrammingLanguage ? this.codingLanguage : null,
+        {
+          onDelta: (_delta, fullText) => {
+            const now = Date.now();
+            if (now - lastFlush < 40) return;
+            lastFlush = now;
+            windowManager.updateLLMResponseStream(fullText, streamMeta);
+          }
+        }
       );
 
       // Add LLM response to session memory
@@ -796,8 +830,17 @@ class ApplicationController {
         isTranscriptionResponse: true
       });
 
-      // Send response to chat windows
-      this.broadcastTranscriptionLLMResponse(llmResult);
+      windowManager.endLLMResponseStream(llmResult.response, {
+        skill: this.activeSkill,
+        processingTime: llmResult.metadata.processingTime,
+        usedFallback: llmResult.metadata.usedFallback,
+        isTranscriptionResponse: true
+      });
+
+      // Avoid duplicate chat messages when stream already delivered the answer
+      if (!llmResult.metadata?.streamed) {
+        this.broadcastTranscriptionLLMResponse(llmResult);
+      }
 
       logger.info("Transcription LLM response completed", {
         responseLength: llmResult.response.length,

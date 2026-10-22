@@ -659,6 +659,54 @@
       let isInteractive = true;
       let listeningStartTime = null;
       let listeningTimer = null;
+      let streamingAssistantEl = null;
+
+      function ensureStreamingAssistant() {
+        if (streamingAssistantEl && streamingAssistantEl.isConnected) return;
+        if (!chatMessages) return;
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message assistant streaming';
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'message-time';
+        timeDiv.textContent = new Date().toLocaleTimeString();
+        const textDiv = document.createElement('div');
+        textDiv.className = 'message-text';
+        messageDiv.appendChild(timeDiv);
+        messageDiv.appendChild(textDiv);
+        chatMessages.appendChild(messageDiv);
+        streamingAssistantEl = messageDiv;
+      }
+
+      function updateStreamingAssistant(text, finalize) {
+        if (!streamingAssistantEl) {
+          if (text) addMessage(text, 'assistant');
+          return;
+        }
+        const textDiv = streamingAssistantEl.querySelector('.message-text');
+        if (!textDiv) return;
+        if (finalize) {
+          textDiv.innerHTML = formatMarkdown(text);
+          streamingAssistantEl.classList.remove('streaming');
+        } else {
+          textDiv.textContent = text;
+        }
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      function handleLlmStream(data) {
+        if (!data) return;
+        if (data.phase === 'start') {
+          hideThinkingIndicator();
+          ensureStreamingAssistant();
+          updateStreamingAssistant('', false);
+        } else if (data.phase === 'delta') {
+          ensureStreamingAssistant();
+          updateStreamingAssistant(data.content || '', false);
+        } else if (data.phase === 'done') {
+          updateStreamingAssistant(data.content || '', true);
+          streamingAssistantEl = null;
+        }
+      }
 
       // Basic message function with markdown support for assistant messages
       function addMessage(text, type = 'user') {
@@ -891,13 +939,21 @@
 
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
           if (data && data.response) {
-            // Hide thinking indicator
             hideThinkingIndicator();
-            
-            // Add assistant response with formatting
-            addMessage(data.response, 'assistant');
+            if (streamingAssistantEl) {
+              updateStreamingAssistant(data.response, true);
+              streamingAssistantEl = null;
+            } else {
+              addMessage(data.response, 'assistant');
+            }
           }
         });
+
+        if (whysperAPI.onLlmResponseStream) {
+          whysperAPI.onLlmResponseStream((event, data) => {
+            handleLlmStream(data);
+          });
+        }
       }
 
       // UI Event Listeners

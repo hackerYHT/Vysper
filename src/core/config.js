@@ -45,6 +45,14 @@ class ConfigManager {
           timeout: 30000,
           fallbackEnabled: true,
           enableFallbackMethod: true
+        },
+        deepseek: {
+          // Same model id used by deepseek-harness web profile
+          model: process.env.DEEPSEEK_MODEL || 'deepseek-flash',
+          maxRetries: 3,
+          timeout: 60000,
+          maxTokens: 2048,
+          fallbackEnabled: true
         }
       },
 

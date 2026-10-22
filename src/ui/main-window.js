@@ -18,6 +18,7 @@ class MainWindowUI {
         
         // Define available skills for navigation
         this.availableSkills = [
+            'normal',
             'programming',
             'dsa', 
             'system-design',
@@ -28,6 +29,7 @@ class MainWindowUI {
             'negotiation',
             'devops'
         ];
+        this.currentSkill = 'normal';
         
         this.init();
     }
@@ -330,6 +332,7 @@ class MainWindowUI {
     handleLLMResponse(data) {
         const skill = data.skill || data.metadata?.skill || 'General';
         const skillNames = {
+            'normal': 'Normal',
             'dsa': 'DSA',
             'behavioral': 'Behavioral', 
             'sales': 'Sales',
@@ -465,6 +468,7 @@ class MainWindowUI {
 
     updateSkillIndicator() {
         const skillNames = {
+            'normal': 'Normal',
             'dsa': 'DSA',
             'behavioral': 'Behavioral', 
             'sales': 'Sales',
@@ -578,6 +582,7 @@ class MainWindowUI {
 
     showSkillChangeNotification(skill, direction) {
         const skillNames = {
+            'normal': 'Normal',
             'dsa': 'DSA',
             'behavioral': 'Behavioral', 
             'sales': 'Sales',

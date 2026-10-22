@@ -146,10 +146,21 @@ class ChatWindowUI {
                     // Hide thinking indicator
                     this.hideThinkingIndicator();
                     
-                    // Add assistant response with formatting
-                    this.addMessage(data.response, 'assistant');
+                    // Finalize streaming bubble if present, else add new message
+                    if (this.streamingAssistantEl) {
+                        this.updateStreamingAssistant(data.response, true);
+                        this.streamingAssistantEl = null;
+                    } else {
+                        this.addMessage(data.response, 'assistant');
+                    }
                 }
             });
+
+            if (window.electronAPI.onLlmResponseStream) {
+                window.electronAPI.onLlmResponseStream((event, data) => {
+                    this.handleLlmStream(data);
+                });
+            }
         }
         
         // UI event handlers
@@ -320,6 +331,67 @@ class ChatWindowUI {
             
             logger.debug('User message sent', { textLength: text.length });
         }
+    }
+
+    handleLlmStream(data) {
+        if (!data) return;
+        if (data.phase === 'start') {
+            this.hideThinkingIndicator();
+            this.ensureStreamingAssistant();
+            this.updateStreamingAssistant('', false);
+            return;
+        }
+        if (data.phase === 'delta') {
+            this.ensureStreamingAssistant();
+            this.updateStreamingAssistant(data.content || '', false);
+            return;
+        }
+        if (data.phase === 'done') {
+            this.updateStreamingAssistant(data.content || '', true);
+            this.streamingAssistantEl = null;
+        }
+    }
+
+    ensureStreamingAssistant() {
+        if (this.streamingAssistantEl && this.streamingAssistantEl.isConnected) {
+            return;
+        }
+        if (!this.elements.chatMessages) return;
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message assistant streaming';
+        messageDiv.dataset.streaming = '1';
+
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'message-time';
+        timeDiv.textContent = new Date().toLocaleTimeString();
+
+        const textDiv = document.createElement('div');
+        textDiv.className = 'message-text';
+
+        messageDiv.appendChild(timeDiv);
+        messageDiv.appendChild(textDiv);
+        this.elements.chatMessages.appendChild(messageDiv);
+        this.streamingAssistantEl = messageDiv;
+    }
+
+    updateStreamingAssistant(text, finalize) {
+        if (!this.streamingAssistantEl) {
+            if (!text) return;
+            this.addMessage(text, 'assistant');
+            return;
+        }
+        const textDiv = this.streamingAssistantEl.querySelector('.message-text');
+        if (!textDiv) return;
+
+        if (finalize) {
+            textDiv.innerHTML = this.formatMarkdown(text);
+            this.streamingAssistantEl.classList.remove('streaming');
+            delete this.streamingAssistantEl.dataset.streaming;
+        } else {
+            textDiv.textContent = text;
+        }
+        this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
     }
 
     addMessage(text, type = 'user') {        

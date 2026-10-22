@@ -654,92 +654,78 @@ class WindowManager {
     });
   }
 
-  showOnCurrentDesktop(win) {
+  _setMacOSAlwaysOnTop(win) {
     if (!win || win.isDestroyed()) return;
+    try {
+      win.setAlwaysOnTop(true, 'screen-saver', 2);
+    } catch (error) {
+      try {
+        win.setAlwaysOnTop(true, 'pop-up-menu', 2);
+      } catch (error2) {
+        try {
+          win.setAlwaysOnTop(true, 'floating', 2);
+        } catch (error3) {
+          win.setAlwaysOnTop(true);
+        }
+      }
+    }
+  }
+
+  showOnCurrentDesktop(win, options = {}) {
+    if (!win || win.isDestroyed()) return;
+
+    const force = options.force === true;
+
+    // Already visible: do NOT hide/show again — that causes constant flickering
+    // during streaming / repeated showChatWindow calls.
+    if (win.isVisible() && !force) {
+      if (process.platform === 'darwin') {
+        this._setMacOSAlwaysOnTop(win);
+      } else {
+        win.setAlwaysOnTop(true);
+      }
+      return;
+    }
     
     if (process.platform === 'darwin') {
-      // More aggressive approach for macOS to prevent space switching
-      
-      // First, ensure the window is hidden
-      win.hide();
-      
-      // Set up the window to appear on all workspaces temporarily
+      // Only hide when bringing a hidden window onto the current Space
+      if (win.isVisible()) {
+        win.hide();
+      }
+
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      this._setMacOSAlwaysOnTop(win);
       
-      // Enforce highest level always-on-top for macOS using multiple attempts
-      const setMacOSAlwaysOnTop = () => {
-        if (!win.isDestroyed()) {
-          try {
-            // Try screen-saver level first (highest)
-            win.setAlwaysOnTop(true, 'screen-saver', 2);
-          } catch (error) {
-            try {
-              // Fallback to pop-up-menu level
-              win.setAlwaysOnTop(true, 'pop-up-menu', 2);
-            } catch (error2) {
-              try {
-                // Final fallback to floating level
-                win.setAlwaysOnTop(true, 'floating', 2);
-              } catch (error3) {
-                // Absolute fallback
-                win.setAlwaysOnTop(true);
-              }
-            }
-          }
-        }
-      };
-      
-      setMacOSAlwaysOnTop();
-      
-      // Small delay to ensure settings take effect
       setTimeout(() => {
         if (!win.isDestroyed()) {
-          // Show the window (should appear on current space without switching)
-          win.show();
-          
-          // Focus without switching spaces
-          win.focus();
-          
-          // Re-enforce always-on-top after showing
-          setMacOSAlwaysOnTop();
-          
-          // Additional enforcement
-          setTimeout(() => {
-            if (!win.isDestroyed()) {
-              setMacOSAlwaysOnTop();
-            }
-          }, 100);
-          
-          // After window is shown, remove from all workspaces to prevent clutter
+          win.showInactive ? win.showInactive() : win.show();
+          this._setMacOSAlwaysOnTop(win);
+
           setTimeout(() => {
             if (!win.isDestroyed()) {
               win.setVisibleOnAllWorkspaces(false);
-              // Final always-on-top enforcement
-              setMacOSAlwaysOnTop();
+              this._setMacOSAlwaysOnTop(win);
             }
           }, 300);
         }
       }, 50);
     } else {
-      // For non-macOS platforms, simpler approach with enhanced always-on-top
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       win.setAlwaysOnTop(true);
       win.show();
-      win.focus();
       
       setTimeout(() => {
         if (!win.isDestroyed()) {
           win.setVisibleOnAllWorkspaces(false);
-          // Ensure always-on-top is maintained
           win.setAlwaysOnTop(true);
         }
       }, 500);
     }
     
-    logger.debug('Showing window on current desktop with enhanced always-on-top', {
+    logger.debug('Showing window on current desktop', {
       platform: process.platform,
       windowId: win.id,
-      isDestroyed: win.isDestroyed()
+      forced: force
     });
   }
   
@@ -1122,6 +1108,75 @@ class WindowManager {
       windowVisible: llmWindow.isVisible(),
       boundWindows: this.bindWindows
     });
+  }
+
+  /**
+   * Streaming LLM response helpers for the answer window + chat broadcasts.
+   */
+  beginLLMResponseStream(metadata = {}) {
+    if (this.isScreenBeingShared) return;
+
+    const chatOnly = !!metadata.isTranscriptionResponse;
+
+    if (chatOnly) {
+      // Voice answers belong in the chat window only
+      this.showChatWindow();
+      this.hideLLMResponse();
+    } else {
+      const llmWindow = this.windows.get('llmResponse');
+      if (llmWindow && !llmWindow.isDestroyed()) {
+        this.showOnCurrentDesktop(llmWindow);
+        if (this.bindWindows) {
+          this.positionBoundWindows();
+        }
+      }
+    }
+
+    // Single broadcast — avoids duplicate handlers in chat / response windows
+    this.broadcastToAllWindows('llm-response-stream', {
+      phase: 'start',
+      content: '',
+      metadata,
+      skill: metadata.skill,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  updateLLMResponseStream(content, metadata = {}) {
+    if (this.isScreenBeingShared) return;
+
+    this.broadcastToAllWindows('llm-response-stream', {
+      phase: 'delta',
+      content,
+      metadata,
+      skill: metadata.skill,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  endLLMResponseStream(content, metadata = {}) {
+    if (this.isScreenBeingShared) return;
+
+    this.broadcastToAllWindows('llm-response-stream', {
+      phase: 'done',
+      content,
+      metadata,
+      skill: metadata.skill,
+      timestamp: new Date().toISOString()
+    });
+
+    // Screenshot / OCR → finalize in answer window.
+    // Voice transcription → stay in chat only (do not pop a second window).
+    if (!metadata.isTranscriptionResponse) {
+      this.showLLMResponse(content, metadata);
+    } else {
+      // Chat should already be visible from recording/stream start — avoid re-show flicker
+      const chatWindow = this.windows.get('chat');
+      if (!chatWindow || chatWindow.isDestroyed() || !chatWindow.isVisible()) {
+        this.showChatWindow();
+      }
+      this.hideLLMResponse();
+    }
   }
 
   showLLMLoading() {
@@ -1562,8 +1617,9 @@ class WindowManager {
   showChatWindow() {
     const chatWindow = this.windows.get('chat');
     if (chatWindow && !chatWindow.isDestroyed()) {
-      this.showOnCurrentDesktop(chatWindow);
-      logger.debug('Chat window shown');
+      // Soft show: skip hide/show cycle when already visible
+      this.showOnCurrentDesktop(chatWindow, { force: false });
+      logger.debug('Chat window shown', { wasVisible: chatWindow.isVisible() });
     }
   }
 
@@ -1578,6 +1634,7 @@ class WindowManager {
   handleRecordingStarted() {
     this.isRecording = true;
     this.showChatWindow();
+    this.hideLLMResponse();
     // Notify all windows about recording state
     this.broadcastToAllWindows('recording-started');
     logger.debug('Recording started, chat window shown');
@@ -1585,10 +1642,10 @@ class WindowManager {
 
   handleRecordingStopped() {
     this.isRecording = false;
-    this.hideChatWindow();
+    // Keep chat visible so the streamed answer can appear in one place
     // Notify all windows about recording state
     this.broadcastToAllWindows('recording-stopped');
-    logger.debug('Recording stopped, chat window hidden');
+    logger.debug('Recording stopped, chat window kept for answer');
   }
 
   broadcastSkillChange(skill) {

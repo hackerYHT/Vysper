@@ -379,14 +379,81 @@
             gfm: true
         });
 
+        let streamRenderTimer = null;
+        let pendingStreamContent = '';
+        let isStreaming = false;
+
+        function renderStreamingContent(content) {
+            hideLoadingState();
+            const responseElement = document.getElementById('response-content');
+            const fullContent = document.getElementById('full-content');
+            const splitLayout = document.getElementById('split-layout');
+            const fullMarkdown = document.getElementById('full-markdown');
+            if (responseElement) responseElement.classList.remove('hidden');
+            if (splitLayout) splitLayout.classList.add('hidden');
+            if (fullContent) fullContent.classList.remove('hidden');
+            if (!fullMarkdown) return;
+
+            let html;
+            try {
+                html = content && typeof marked !== 'undefined'
+                    ? marked.parse(content)
+                    : `<pre style="white-space:pre-wrap;word-break:break-word;margin:0;">${String(content || '')
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+            } catch (e) {
+                html = `<pre style="white-space:pre-wrap;margin:0;">${String(content || '')}</pre>`;
+            }
+            fullMarkdown.innerHTML = html + (isStreaming
+                ? '<span style="display:inline-block;width:8px;height:1em;background:rgba(255,255,255,0.7);margin-left:2px;animation:blink 1s step-end infinite;"></span>'
+                : '');
+            if (!document.getElementById('stream-cursor-style')) {
+                const style = document.createElement('style');
+                style.id = 'stream-cursor-style';
+                style.textContent = '@keyframes blink{50%{opacity:0}}';
+                document.head.appendChild(style);
+            }
+        }
+
+        function handleLlmStream(data) {
+            if (!data) return;
+            if (data.phase === 'start') {
+                isStreaming = true;
+                hideLoadingState();
+                renderStreamingContent('');
+            } else if (data.phase === 'delta') {
+                isStreaming = true;
+                pendingStreamContent = data.content || '';
+                if (streamRenderTimer) return;
+                streamRenderTimer = setTimeout(() => {
+                    streamRenderTimer = null;
+                    renderStreamingContent(pendingStreamContent);
+                }, 32);
+            } else if (data.phase === 'done') {
+                isStreaming = false;
+                if (streamRenderTimer) {
+                    clearTimeout(streamRenderTimer);
+                    streamRenderTimer = null;
+                }
+                // Final paint is handled by display-llm-response from showLLMResponse
+                hideLoadingState();
+            }
+        }
+
         // Set up event listeners using electronAPI from preload script
         if (window.electronAPI) {
             // Set up show-loading event listener
             window.electronAPI.onShowLoading(() => {
                 showLoadingState();
             });
+
+            if (window.electronAPI.onLlmResponseStream) {
+                window.electronAPI.onLlmResponseStream((event, data) => {
+                    handleLlmStream(data);
+                });
+            }
             
             window.electronAPI.onDisplayLlmResponse((event, data) => {
+                isStreaming = false;
                 const response = data.content || data.response;
             
             // Check if window is still small (compact size) and request expansion

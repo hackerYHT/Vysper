@@ -7,6 +7,8 @@ class LLMResponseWindowUI {
     this.currentSkill = "dsa";
     this.isInteractive = false;
     this.scrollableElements = [];
+    this.isStreaming = false;
+    this.streamRenderTimer = null;
 
     this.elements = {};
 
@@ -98,6 +100,10 @@ class LLMResponseWindowUI {
       }, 50);
     });
 
+    ipcRenderer.on("llm-response-stream", (event, data) => {
+      this.handleStreamEvent(data);
+    });
+
     // Interaction state handlers
     ipcRenderer.on("interaction-enabled", () => {
       logger.debug("interaction-enabled event received", {
@@ -164,6 +170,94 @@ class LLMResponseWindowUI {
         },
         breaks: true,
         gfm: true,
+      });
+    }
+  }
+
+  handleStreamEvent(data) {
+    if (!data || typeof data !== "object") return;
+
+    const phase = data.phase;
+    const content = data.content || "";
+
+    if (phase === "start") {
+      this.isStreaming = true;
+      this.hideLoadingState();
+      this.showResponseContent();
+      this.renderStreamingContent("");
+      return;
+    }
+
+    if (phase === "delta") {
+      this.isStreaming = true;
+      this.hideLoadingState();
+      this.showResponseContent();
+      this.scheduleStreamRender(content);
+      return;
+    }
+
+    if (phase === "done") {
+      this.isStreaming = false;
+      if (this.streamRenderTimer) {
+        clearTimeout(this.streamRenderTimer);
+        this.streamRenderTimer = null;
+      }
+      this.handleDisplayResponse({
+        content,
+        response: content,
+        metadata: data.metadata || {},
+      });
+    }
+  }
+
+  scheduleStreamRender(content) {
+    this._pendingStreamContent = content;
+    if (this.streamRenderTimer) return;
+    this.streamRenderTimer = setTimeout(() => {
+      this.streamRenderTimer = null;
+      this.renderStreamingContent(this._pendingStreamContent || "");
+    }, 32);
+  }
+
+  renderStreamingContent(content) {
+    try {
+      if (this.elements.splitLayout) {
+        this.elements.splitLayout.classList.add("hidden");
+      }
+      if (this.elements.fullContent) {
+        this.elements.fullContent.classList.remove("hidden");
+      }
+
+      let html;
+      if (typeof marked !== "undefined" && content) {
+        html = marked.parse(content);
+      } else {
+        const escaped = String(content || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+        html = `<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-family:inherit;">${escaped}</pre>`;
+      }
+
+      if (this.elements.fullMarkdown) {
+        this.elements.fullMarkdown.innerHTML =
+          html +
+          (this.isStreaming
+            ? '<span class="stream-cursor" style="display:inline-block;width:8px;height:1em;background:rgba(255,255,255,0.7);margin-left:2px;animation:blink 1s step-end infinite;"></span>'
+            : "");
+      }
+
+      if (!document.getElementById("stream-cursor-style")) {
+        const style = document.createElement("style");
+        style.id = "stream-cursor-style";
+        style.textContent =
+          "@keyframes blink{50%{opacity:0}}";
+        document.head.appendChild(style);
+      }
+    } catch (error) {
+      logger.error("Failed to render streaming content", {
+        component: "LLMResponseWindowUI",
+        error: error.message,
       });
     }
   }

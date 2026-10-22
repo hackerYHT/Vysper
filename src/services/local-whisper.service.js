@@ -7,8 +7,8 @@ const recorder = require('node-record-lpcm16');
 const logger = require('../core/logger').createServiceLogger('SPEECH_LOCAL');
 
 /**
- * Local Chinese speech-to-text via whisper.cpp (no cloud key).
- * Flow: mic (sox) → temp wav → whisper-cli -l zh → transcription event
+ * Local speech-to-text via whisper.cpp (no cloud key).
+ * Accuracy for CN+EN tech terms comes from a larger model (medium), not post-hoc dictionaries.
  */
 class LocalWhisperSpeechService extends EventEmitter {
   constructor() {
@@ -21,9 +21,13 @@ class LocalWhisperSpeechService extends EventEmitter {
     this.isTranscribing = false;
 
     this.whisperBin = process.env.WHISPER_BIN || 'whisper-cli';
-    this.language = process.env.WHISPER_LANGUAGE || 'zh';
+    // auto: better for Chinese + English proper nouns (Istio, Kubernetes, …)
+    this.language = process.env.WHISPER_LANGUAGE || 'auto';
     this.modelPath = this.resolveModelPath();
     this.sampleRate = 16000;
+    // Decoding quality (whisper.cpp beam search)
+    this.beamSize = Number(process.env.WHISPER_BEAM_SIZE || 5);
+    this.bestOf = Number(process.env.WHISPER_BEST_OF || 5);
 
     this.initialize();
   }
@@ -32,7 +36,12 @@ class LocalWhisperSpeechService extends EventEmitter {
     if (process.env.WHISPER_MODEL_PATH) {
       return path.resolve(process.env.WHISPER_MODEL_PATH);
     }
-    return path.join(__dirname, '../../models/ggml-small.bin');
+    const modelsDir = path.join(__dirname, '../../models');
+    // Prefer medium when available (much better on English loanwords)
+    const medium = path.join(modelsDir, 'ggml-medium.bin');
+    const small = path.join(modelsDir, 'ggml-small.bin');
+    if (fs.existsSync(medium)) return medium;
+    return small;
   }
 
   initialize() {
@@ -233,13 +242,17 @@ class LocalWhisperSpeechService extends EventEmitter {
         '-m', this.modelPath,
         '-l', this.language,
         '-f', wavPath,
-        '-nt', // no timestamps in stdout
-        '-np', // no prints / progress
-        // Bias toward Simplified Chinese for interview use
-        '--prompt', '以下是普通话面试对话的简体中文内容。'
+        '-bs', String(this.beamSize),
+        '-bo', String(this.bestOf),
+        '-nt',
+        '-np'
       ];
 
-      logger.debug('Running whisper-cli', { args: args.join(' ') });
+      logger.info('Running whisper-cli', {
+        model: path.basename(this.modelPath),
+        language: this.language,
+        beamSize: this.beamSize
+      });
 
       const child = spawn(this.whisperBin, args, {
         env: process.env
@@ -259,7 +272,7 @@ class LocalWhisperSpeechService extends EventEmitter {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error('转写超时（>120s）'));
-      }, 120000);
+      }, 180000);
 
       child.on('error', (error) => {
         clearTimeout(timeout);
@@ -273,14 +286,25 @@ class LocalWhisperSpeechService extends EventEmitter {
           return;
         }
 
-        // whisper-cli with -nt prints plain transcript lines to stdout
-        const text = stdout
+        let text = stdout
           .split('\n')
           .map((line) => line.trim())
           .filter((line) => line && !line.startsWith('['))
-          .join('')
-          .replace(/\s+/g, '')
+          .join(' ')
+          .replace(/\s+/g, ' ')
           .trim();
+
+        // Drop common subtitle-style hallucinations (not term dictionaries)
+        const junkPatterns = [
+          /^字幕由Amara\.org社区提供$/,
+          /^谢谢观看$/,
+          /^请不吝点赞$/,
+          /^订阅明镜与点点栏目$/
+        ];
+        if (junkPatterns.some((re) => re.test(text.replace(/\s+/g, '')))) {
+          logger.warn('Discarding likely hallucinated transcription', { text });
+          text = '';
+        }
 
         resolve(text);
       });
