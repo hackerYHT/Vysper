@@ -946,6 +946,10 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
   cancel() {
     // no-op
   }
+
+  async processScreenshotVision() {
+    throw new Error('截图识图目前仅支持 DeepSeek（LLM_PROVIDER=deepseek）');
+  }
 }
 
 module.exports = new LLMService();

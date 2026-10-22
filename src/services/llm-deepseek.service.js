@@ -92,6 +92,98 @@ class DeepSeekLLMService {
     }
   }
 
+  /**
+   * Send a screenshot image to DeepSeek vision and stream the answer.
+   * @param {string} dataUrl - data:image/png;base64,...
+   * @param {string} activeSkill
+   * @param {string|null} programmingLanguage
+   * @param {{ onDelta?: Function }} options
+   */
+  async processScreenshotVision(dataUrl, activeSkill = 'dsa', programmingLanguage = null, options = {}) {
+    if (!this.isInitialized) {
+      throw new Error('LLM service not initialized. Configure DEEPSEEK_API_KEY (same as deepseek-harness).');
+    }
+    if (!dataUrl || !String(dataUrl).startsWith('data:image/')) {
+      throw new Error('Invalid screenshot image data URL');
+    }
+
+    const startTime = Date.now();
+    this.requestCount++;
+    const onDelta = typeof options.onDelta === 'function' ? options.onDelta : null;
+    const langHint = programmingLanguage
+      ? `代码优先使用 ${String(programmingLanguage).toUpperCase()}。`
+      : '代码语言优先匹配题目/截图中的语言；不确定则用 Python。';
+
+    const systemPrompt = [
+      '你是面试算法 / 编程助手。用户发来一张屏幕截图（题目或代码）。',
+      '请直接看图理解题意并解答，不要要求用户再输入文字。',
+      '回答必须使用简体中文（禁止繁体字），简洁、可口述。',
+      langHint,
+      '',
+      '请按结构输出：',
+      '1. 题意理解',
+      '2. 解题思路',
+      '3. 时间 / 空间复杂度',
+      '4. 完整可运行代码',
+      '5. 简要边界或举例（可选）'
+    ].join('\n');
+
+    const userText = activeSkill && activeSkill !== 'normal' && activeSkill !== 'general'
+      ? `当前技能模式：${activeSkill}。请解答截图中的题目。`
+      : '请解答截图中的算法 / 编程题。';
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: userText },
+          {
+            type: 'image_url',
+            image_url: {
+              url: dataUrl,
+              detail: 'high'
+            }
+          }
+        ]
+      }
+    ];
+
+    try {
+      const response = onDelta
+        ? await this.chatCompletionsStream(messages, onDelta)
+        : await this.chatCompletions(messages);
+
+      const cancelled = this.cancelRequested;
+      const finalText = cancelled
+        ? (response ? `${response}\n\n（已中断）` : '（已中断）')
+        : response;
+
+      return {
+        response: finalText,
+        metadata: {
+          skill: activeSkill,
+          programmingLanguage,
+          processingTime: Date.now() - startTime,
+          requestId: this.requestCount,
+          provider: 'deepseek-vision',
+          model: this.model,
+          usedFallback: false,
+          streamed: !!onDelta,
+          cancelled,
+          source: 'screenshot-vision'
+        }
+      };
+    } catch (error) {
+      this.errorCount++;
+      logger.error('DeepSeek vision screenshot failed', {
+        error: error.message,
+        requestId: this.requestCount
+      });
+      throw error;
+    }
+  }
+
   async processTextWithSkill(text, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Configure DEEPSEEK_API_KEY (same as deepseek-harness).');

@@ -98,7 +98,30 @@ class DshHeadlessService {
     this.activeChild = null;
   }
 
-  buildTaskPrompt(question) {
+  buildTaskPrompt(question, options = {}) {
+    const q = String(question || '').trim();
+    const source = options.source || 'chat';
+
+    // Screenshot OCR → auto-solve as algorithm / coding problem (works even in normal skill)
+    if (source === 'screenshot' || source === 'ocr') {
+      return [
+        '用户通过截图 OCR 发来一道题目（多为算法 / 数据结构 / 编程题）。',
+        '请直接解答，不需要用户再补充输入。',
+        '可按需查阅当前工作区代码；默认只读，不要改文件、不要提交 git。',
+        '回答必须使用简体中文（禁止繁体字），结构清晰，方便口述。',
+        '',
+        '请按下面结构输出：',
+        '1. 题意理解（1–3 句）',
+        '2. 解题思路与算法选择',
+        '3. 时间 / 空间复杂度',
+        '4. 完整可运行代码（优先匹配工作区主要语言；不确定则用 Python）',
+        '5. 简要举例或边界说明（可选）',
+        '',
+        '以下是 OCR 识别到的题目原文（可能有识别误差，请合理推断）：',
+        q
+      ].join('\n');
+    }
+
     return [
       '你是基于当前工作区代码的助手。请按需查阅仓库文件后回答。',
       '默认只读分析，不要修改文件、不要提交 git，除非用户明确要求。',
@@ -106,7 +129,7 @@ class DshHeadlessService {
       '回答尽量简洁、结构化。',
       '',
       '用户问题：',
-      String(question || '').trim()
+      q
     ].join('\n');
   }
 
@@ -128,7 +151,10 @@ class DshHeadlessService {
     }
 
     const launch = this.resolveLaunch(options);
-    const task = this.buildTaskPrompt(question);
+    const task = this.buildTaskPrompt(question, {
+      source: options.source || 'chat',
+      skill: options.skill
+    });
     const args = [
       ...launch.argsPrefix,
       '--profile', 'headless',

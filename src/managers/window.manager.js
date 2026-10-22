@@ -1167,12 +1167,18 @@ class WindowManager {
       timestamp: new Date().toISOString()
     });
 
-    // Screenshot / OCR → finalize in answer window.
-    // Voice transcription → stay in chat only (do not pop a second window).
+    // Stream `done` already rendered content — do NOT also send display-llm-response
+    // (that duplicated the same answer / error twice).
     if (!metadata.isTranscriptionResponse) {
-      this.showLLMResponse(simplified, metadata);
+      const llmWindow = this.windows.get('llmResponse');
+      if (llmWindow && !llmWindow.isDestroyed()) {
+        this.showOnCurrentDesktop(llmWindow, { force: false });
+        if (this.bindWindows) {
+          this.positionBoundWindows();
+        }
+      }
     } else {
-      // Chat should already be visible from recording/stream start — avoid re-show flicker
+      // Voice: stay in chat only
       const chatWindow = this.windows.get('chat');
       if (!chatWindow || chatWindow.isDestroyed() || !chatWindow.isVisible()) {
         this.showChatWindow();

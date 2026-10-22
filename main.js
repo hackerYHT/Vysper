@@ -845,13 +845,91 @@ class ApplicationController {
   }
 
   async triggerScreenshotOCR() {
+    // Kept name for IPC/shortcut compatibility — now sends image to vision by default
+    return this.triggerScreenshotVision();
+  }
+
+  /**
+   * ⌘⇧S: capture screen → DeepSeek vision (no OCR). Auto-solve algorithm problems.
+   * Set SCREENSHOT_USE_OCR=1 to fall back to the old OCR → text path.
+   */
+  async triggerScreenshotVision() {
     if (!this.isReady) {
       logger.warn("Screenshot requested before application ready");
       return;
     }
 
     const startTime = Date.now();
+    const useOcr = process.env.SCREENSHOT_USE_OCR === "1" || process.env.SCREENSHOT_USE_OCR === "true";
 
+    try {
+      if (useOcr) {
+        await this.triggerScreenshotViaOcr();
+        return;
+      }
+
+      windowManager.showLLMLoading();
+
+      const shot = await ocrService.captureScreenshotImage();
+      if (!shot?.dataUrl) {
+        windowManager.hideLLMResponse();
+        this.broadcastOCRError("Screenshot capture failed");
+        return;
+      }
+
+      sessionManager.addConversationEvent({
+        role: "user",
+        content: "[截图] 请解答屏幕上的题目",
+        action: "screenshot_vision",
+        metadata: {
+          processingTime: shot.metadata?.processingTime,
+          dimensions: shot.metadata?.source?.dimensions,
+          byteLength: shot.metadata?.byteLength,
+        },
+      });
+
+      this.broadcastOCRSuccess({
+        text: "[截图已发送给 AI 识图解答]",
+        metadata: shot.metadata,
+      });
+
+      await this.processScreenshotWithVision(shot.dataUrl);
+    } catch (error) {
+      // processScreenshotWithVision already renders the error once in the answer pane
+      logger.error("Screenshot vision process failed", {
+        error: error.message,
+        duration: Date.now() - startTime,
+      });
+
+      sessionManager.addConversationEvent({
+        role: "system",
+        content: `Screenshot vision failed: ${error.message}`,
+        action: "screenshot_vision_error",
+        metadata: { error: error.message },
+      });
+    }
+  }
+
+  formatScreenshotError(message) {
+    const msg = String(message || "未知错误");
+    if (/Insufficient Balance|402/i.test(msg)) {
+      return [
+        "❌ 截图识图失败：DeepSeek 账户余额不足（HTTP 402）。",
+        "",
+        "请到 https://platform.deepseek.com/ 充值后重试。",
+        "语音文字问答若仍可用，多半是识图计费更高导致余额不够。",
+        "",
+        `详情：${msg.slice(0, 300)}`,
+      ].join("\n");
+    }
+    if (/401|Unauthorized|invalid.*key/i.test(msg)) {
+      return `❌ 截图识图失败：API Key 无效。请检查 DEEPSEEK_API_KEY 或 ~/.dsh 凭据。\n\n${msg.slice(0, 300)}`;
+    }
+    return `❌ 截图识图失败：${msg.slice(0, 500)}`;
+  }
+
+  async triggerScreenshotViaOcr() {
+    const startTime = Date.now();
     try {
       windowManager.showLLMLoading();
 
@@ -863,33 +941,93 @@ class ApplicationController {
         return;
       }
 
-      // Add OCR extracted text to session memory
       sessionManager.addOCREvent(ocrResult.text, {
         processingTime: ocrResult.metadata?.processingTime,
-        source: 'screenshot'
+        source: "screenshot",
       });
 
       this.broadcastOCRSuccess(ocrResult);
 
       const sessionHistory = sessionManager.getOptimizedHistory();
-      await this.processWithLLM(ocrResult.text, sessionHistory);
+      await this.processWithLLM(ocrResult.text, sessionHistory, {
+        source: "screenshot",
+      });
     } catch (error) {
       logger.error("Screenshot OCR process failed", {
         error: error.message,
         duration: Date.now() - startTime,
       });
-
       windowManager.hideLLMResponse();
       this.broadcastOCRError(error.message);
-      
       sessionManager.addConversationEvent({
-        role: 'system',
+        role: "system",
         content: `Screenshot OCR failed: ${error.message}`,
-        action: 'ocr_error',
-        metadata: {
-          error: error.message
-        }
+        action: "ocr_error",
+        metadata: { error: error.message },
       });
+    }
+  }
+
+  async processScreenshotWithVision(dataUrl) {
+    const streamMeta = {
+      skill: this.activeSkill,
+      source: "screenshot-vision",
+      provider: "deepseek-vision",
+    };
+
+    windowManager.beginLLMResponseStream(streamMeta);
+    windowManager.updateLLMResponseStream("截图已捕获，正在识图解答…", streamMeta);
+    this.beginGeneration();
+
+    let lastFlush = 0;
+    try {
+      if (typeof llmService.processScreenshotVision !== "function") {
+        throw new Error("当前 LLM 不支持截图识图，请设置 LLM_PROVIDER=deepseek");
+      }
+
+      const llmResult = await llmService.processScreenshotVision(
+        dataUrl,
+        this.activeSkill || "dsa",
+        this.codingLanguage || null,
+        {
+          onDelta: (_delta, fullText) => {
+            const now = Date.now();
+            if (now - lastFlush < 40) return;
+            lastFlush = now;
+            windowManager.updateLLMResponseStream(fullText, streamMeta);
+          },
+        }
+      );
+
+      sessionManager.addModelResponse(llmResult.response, {
+        skill: this.activeSkill,
+        processingTime: llmResult.metadata.processingTime,
+        provider: "deepseek-vision",
+        source: "screenshot-vision",
+      });
+
+      windowManager.endLLMResponseStream(llmResult.response, {
+        skill: this.activeSkill,
+        processingTime: llmResult.metadata.processingTime,
+        usedFallback: false,
+        cancelled: !!llmResult.metadata.cancelled,
+        provider: "deepseek-vision",
+      });
+
+      if (!llmResult.metadata?.streamed) {
+        this.broadcastLLMSuccess(llmResult);
+      }
+    } catch (error) {
+      // Surface failure once in the answer pane (don't leave "正在识图" forever)
+      const friendly = this.formatScreenshotError(error.message);
+      windowManager.endLLMResponseStream(friendly, {
+        skill: this.activeSkill,
+        source: "screenshot-vision",
+        error: true,
+      });
+      // Don't rethrow — outer trigger already logged; avoids duplicate UI errors
+    } finally {
+      this.endGeneration();
     }
   }
 
@@ -897,13 +1035,14 @@ class ApplicationController {
     return !!(this.dshEnabled && this.workspacePath && fs.existsSync(this.workspacePath));
   }
 
-  async processWithDsh(text, { isTranscriptionResponse = false } = {}) {
+  async processWithDsh(text, { isTranscriptionResponse = false, source = "chat" } = {}) {
     const started = Date.now();
     const streamMeta = {
       skill: this.activeSkill,
       provider: "dsh-headless",
       workspacePath: this.workspacePath,
       isTranscriptionResponse,
+      source,
     };
 
     this.beginGeneration();
@@ -912,10 +1051,10 @@ class ApplicationController {
         windowManager.showLLMLoading();
       }
       windowManager.beginLLMResponseStream(streamMeta);
-      windowManager.updateLLMResponseStream(
-        `正在用 dsh 分析工作区…\n${this.workspacePath}`,
-        streamMeta
-      );
+      const waitingHint = source === "screenshot"
+        ? `截图已识别，正在用 dsh 解答…\n${this.workspacePath}`
+        : `正在用 dsh 分析工作区…\n${this.workspacePath}`;
+      windowManager.updateLLMResponseStream(waitingHint, streamMeta);
 
       let lastFlush = 0;
       let latestAnswer = "";
@@ -923,6 +1062,8 @@ class ApplicationController {
         workspacePath: this.workspacePath,
         harnessDir: this.dshHarnessDir || undefined,
         timeoutMs: config.get("dsh.timeoutMs"),
+        source,
+        skill: this.activeSkill,
         onStatus: (msg) => {
           if (latestAnswer) return; // don't overwrite streamed answer
           const now = Date.now();
@@ -972,21 +1113,31 @@ class ApplicationController {
     }
   }
 
-  async processWithLLM(text, sessionHistory) {
+  async processWithLLM(text, sessionHistory, { source = "chat" } = {}) {
     try {
       // Add user input to session memory
-      sessionManager.addUserInput(text, 'llm_input');
+      sessionManager.addUserInput(text, source === "screenshot" ? "screenshot_ocr" : "llm_input");
 
       if (this.shouldUseDsh()) {
-        await this.processWithDsh(text, { isTranscriptionResponse: false });
+        await this.processWithDsh(text, {
+          isTranscriptionResponse: false,
+          source,
+        });
         return;
       }
 
+      // No dsh workspace: screenshot still auto-answers via DeepSeek.
+      // Prefer DSA-style solving for screenshots even if UI skill is "normal".
+      const effectiveSkill =
+        source === "screenshot" && (this.activeSkill === "normal" || this.activeSkill === "general")
+          ? "dsa"
+          : this.activeSkill;
+
       // Check if current skill needs programming language context
       const skillsRequiringProgrammingLanguage = ['programming', 'dsa', 'devops', 'system-design', 'data-science'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
+      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(effectiveSkill);
 
-      const streamMeta = { skill: this.activeSkill };
+      const streamMeta = { skill: effectiveSkill, source };
       windowManager.showLLMLoading();
       windowManager.beginLLMResponseStream(streamMeta);
       this.beginGeneration();
@@ -996,7 +1147,7 @@ class ApplicationController {
       try {
         llmResult = await llmService.processTextWithSkill(
         text,
-        this.activeSkill,
+        effectiveSkill,
         sessionHistory.recent,
         needsProgrammingLanguage ? this.codingLanguage : null,
         {

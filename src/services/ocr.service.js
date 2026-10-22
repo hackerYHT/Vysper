@@ -11,6 +11,44 @@ class OCRService {
     this.tempFiles = new Set();
   }
 
+  /**
+   * Capture screen as PNG for vision models (no OCR).
+   * @returns {{ pngBuffer: Buffer, dataUrl: string, metadata: object }}
+   */
+  async captureScreenshotImage() {
+    if (this.isProcessing) {
+      throw new Error('Screenshot operation already in progress');
+    }
+
+    this.isProcessing = true;
+    const startTime = Date.now();
+
+    try {
+      logger.info('Starting screenshot capture for vision');
+      const screenshot = await this.captureScreenshot();
+      const pngBuffer = screenshot.image.toPNG();
+      const dataUrl = `data:image/png;base64,${pngBuffer.toString('base64')}`;
+
+      logger.logPerformance('Screenshot capture', startTime, {
+        bytes: pngBuffer.length,
+        dimensions: screenshot.metadata.dimensions
+      });
+
+      return {
+        pngBuffer,
+        dataUrl,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          source: screenshot.metadata,
+          processingTime: Date.now() - startTime,
+          byteLength: pngBuffer.length
+        }
+      };
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
   async captureAndProcess() {
     if (this.isProcessing) {
       throw new Error('OCR operation already in progress');
@@ -45,9 +83,10 @@ class OCRService {
   }
 
   async captureScreenshot() {
+    // Higher res for vision models to read problem text / code
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: 1920, height: 1080 }
+      thumbnailSize: { width: 2560, height: 1440 }
     });
 
     if (sources.length === 0) {
