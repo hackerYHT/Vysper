@@ -35,8 +35,8 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
-    "electron": "^29.1.0",
-    "electron-builder": "^24.13.3"
+    "electron": "^44.9.3",
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "com.apple.Vysper",

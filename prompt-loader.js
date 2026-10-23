@@ -92,13 +92,11 @@ Unless explicitly asked for a different language, all code examples, solutions, 
         break;
         
       case 'dsa':
-        languageInjection = `\n\n## IMPLEMENTATION LANGUAGE: ${languageUpper}
-When providing algorithm implementations and data structure examples, use ${languageTitle} as the primary language. Focus on:
-- ${languageTitle}-specific syntax for algorithms
-- Built-in data structures available in ${languageTitle}
-- Language-specific optimizations
-- Standard library methods relevant to DSA
-- Time/space complexity in the context of ${languageTitle}`;
+        languageInjection = `\n\n## IMPLEMENTATION LANGUAGES (REQUIRED)
+Always provide complete runnable solutions in **all three** languages: **Java**, **Go**, and **Python**.
+Include all necessary imports/packages for each language — never omit them (e.g. java.util.*, fmt, collections).
+Output order: (1) 题意理解 (2) 按步骤解题思路 (3) 使用示例干跑证明 (4) 复杂度 (5) 三种语言完整代码含 import (6) 边界。
+Prefer these three even if the UI language setting is ${languageTitle}.`;
         break;
         
       case 'system-design':

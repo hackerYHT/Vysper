@@ -30,7 +30,8 @@
         box-shadow: 0 4px 25px rgba(0, 0, 0, 0.15);
         display: flex;
         flex-direction: column;
-        -webkit-app-region: drag;
+        /* Only the header is draggable — full-container drag breaks Electron 44 */
+        -webkit-app-region: no-drag;
       }
       .chat-header {
         position: relative;
@@ -47,6 +48,7 @@
         flex-shrink: 0;
         gap: 12px;
         overflow: visible;
+        min-height: 52px;
       }
       .chat-header-actions {
         display: flex;
@@ -145,7 +147,11 @@
         align-items: center;
         gap: 8px;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-        pointer-events: none;
+        /* Keep drag on title area (Electron needs hit-testable drag region) */
+        -webkit-app-region: drag;
+        flex: 1;
+        min-width: 0;
+        user-select: none;
       }
       .recording-indicator {
         width: 8px;
@@ -813,9 +819,52 @@
       let listeningStartTime = null;
       let listeningTimer = null;
       let streamingAssistantEl = null;
+      // If user scrolls up while streaming, pause stick-to-bottom
+      let stickToBottom = true;
 
       if (typeof marked !== 'undefined' && typeof marked.setOptions === 'function') {
         marked.setOptions({ gfm: true, breaks: true, pedantic: false });
+      }
+
+      function isNearBottom(el, threshold = 80) {
+        if (!el) return true;
+        return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+      }
+
+      function scrollChatToBottom(force = false) {
+        if (!chatMessages) return;
+        if (force || stickToBottom) {
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+      }
+
+      if (chatMessages) {
+        chatMessages.addEventListener('scroll', () => {
+          stickToBottom = isNearBottom(chatMessages);
+        }, { passive: true });
+        // Detach immediately on scroll-up so streaming deltas cannot yank back down
+        chatMessages.addEventListener('wheel', (e) => {
+          if (e.deltaY < 0) {
+            stickToBottom = false;
+          } else {
+            requestAnimationFrame(() => {
+              stickToBottom = isNearBottom(chatMessages);
+            });
+          }
+        }, { passive: true });
+        let touchStartY = 0;
+        chatMessages.addEventListener('touchstart', (e) => {
+          touchStartY = e.touches[0] ? e.touches[0].clientY : 0;
+        }, { passive: true });
+        chatMessages.addEventListener('touchmove', (e) => {
+          const y = e.touches[0] ? e.touches[0].clientY : touchStartY;
+          if (y - touchStartY > 8) stickToBottom = false;
+          else if (touchStartY - y > 8) {
+            requestAnimationFrame(() => {
+              stickToBottom = isNearBottom(chatMessages);
+            });
+          }
+        }, { passive: true });
       }
 
       function ensureStreamingAssistant() {
@@ -832,6 +881,8 @@
         messageDiv.appendChild(textDiv);
         chatMessages.appendChild(messageDiv);
         streamingAssistantEl = messageDiv;
+        // New stream: resume stick-to-bottom unless user already scrolled up
+        stickToBottom = isNearBottom(chatMessages);
       }
 
       function updateStreamingAssistant(text, finalize) {
@@ -846,15 +897,17 @@
         if (finalize) {
           streamingAssistantEl.classList.remove('streaming');
         }
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scrollChatToBottom(false);
       }
 
       function handleLlmStream(data) {
         if (!data) return;
         if (data.phase === 'start') {
           hideThinkingIndicator();
+          stickToBottom = true;
           ensureStreamingAssistant();
           updateStreamingAssistant('', false);
+          scrollChatToBottom(true);
         } else if (data.phase === 'delta') {
           ensureStreamingAssistant();
           updateStreamingAssistant(data.content || '', false);
@@ -892,7 +945,7 @@
         messageDiv.appendChild(textDiv);
 
         chatMessages.appendChild(messageDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scrollChatToBottom(true);
       }
 
       // Markdown via marked (GFM: fences, lists, tables, …)
@@ -939,7 +992,7 @@
         thinkingDiv.appendChild(textDiv);
 
         chatMessages.appendChild(thinkingDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scrollChatToBottom(true);
       }
 
       // Hide thinking indicator
@@ -1318,6 +1371,33 @@
           micButton.click();
         }
       });
+
+      // Custom header drag — CSS -webkit-app-region is unreliable on transparent frameless windows
+      (function setupChatHeaderDrag() {
+        const header = document.querySelector('.chat-header');
+        if (!header || !whysperAPI || !whysperAPI.moveWindow) return;
+        let dragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        header.addEventListener('mousedown', (e) => {
+          if (e.button !== 0) return;
+          if (e.target.closest('.chat-header-actions, button, a, input, .shortcuts-help-panel')) return;
+          dragging = true;
+          lastX = e.screenX;
+          lastY = e.screenY;
+          e.preventDefault();
+        });
+        window.addEventListener('mousemove', (e) => {
+          if (!dragging) return;
+          const dx = e.screenX - lastX;
+          const dy = e.screenY - lastY;
+          lastX = e.screenX;
+          lastY = e.screenY;
+          if (dx || dy) whysperAPI.moveWindow(dx, dy);
+        });
+        window.addEventListener('mouseup', () => { dragging = false; });
+        window.addEventListener('blur', () => { dragging = false; });
+      })();
 
       // Initialize
       addMessage('Recording in Progress. press Alt+R to stop recording.', 'system');

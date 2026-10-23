@@ -18,6 +18,11 @@ class DeepSeekLLMService {
     this.apiKey = null;
     this.baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
     this.model = process.env.DEEPSEEK_MODEL || config.get('llm.deepseek.model') || 'deepseek-flash';
+    // Some OpenAI-compatible proxies only support vision on a separate model
+    this.visionModel =
+      process.env.DEEPSEEK_VISION_MODEL ||
+      process.env.DEEPSEEK_MODEL ||
+      this.model;
     this.activeReq = null;
     this.cancelRequested = false;
     this.initializeClient();
@@ -50,6 +55,7 @@ class DeepSeekLLMService {
     this.isInitialized = true;
     logger.info('DeepSeek LLM client ready', {
       model: this.model,
+      visionModel: this.visionModel,
       baseUrl: this.baseUrl,
       keySource: this._keySource
     });
@@ -110,22 +116,20 @@ class DeepSeekLLMService {
     const startTime = Date.now();
     this.requestCount++;
     const onDelta = typeof options.onDelta === 'function' ? options.onDelta : null;
-    const langHint = programmingLanguage
-      ? `代码优先使用 ${String(programmingLanguage).toUpperCase()}。`
-      : '代码语言优先匹配题目/截图中的语言；不确定则用 Python。';
-
     const systemPrompt = [
       '你是面试算法 / 编程助手。用户发来一张屏幕截图（题目或代码）。',
       '请直接看图理解题意并解答，不要要求用户再输入文字。',
-      '回答必须使用简体中文（禁止繁体字），简洁、可口述。',
-      langHint,
+      '回答必须使用简体中文（禁止繁体字）。',
+      '代码必须同时给出三种完整可运行实现：Java、Go、Python（缺一不可）。',
+      '每种语言都必须写全必要的 import / package / 引入语句，不要省略包导入。',
       '',
-      '请按结构输出：',
+      '请严格按结构输出：',
       '1. 题意理解',
-      '2. 解题思路',
-      '3. 时间 / 空间复杂度',
-      '4. 完整可运行代码',
-      '5. 简要边界或举例（可选）'
+      '2. 按步骤的解题思路（先写清步骤，再写代码；步骤要可口述）',
+      '3. 使用示例 / 干跑：用具体输入逐步推演中间状态，证明过程正确',
+      '4. 时间 / 空间复杂度',
+      '5. 完整代码（依次 Java、Go、Python；含全部 import/package）',
+      '6. 边界情况（可选）'
     ].join('\n');
 
     const userText = activeSkill && activeSkill !== 'normal' && activeSkill !== 'general'
@@ -150,9 +154,14 @@ class DeepSeekLLMService {
     ];
 
     try {
+      const visionModel = this.visionModel || this.model;
+      logger.info('DeepSeek vision request', {
+        model: visionModel,
+        imageChars: dataUrl.length
+      });
       const response = onDelta
-        ? await this.chatCompletionsStream(messages, onDelta)
-        : await this.chatCompletions(messages);
+        ? await this.chatCompletionsStream(messages, onDelta, { model: visionModel })
+        : await this.chatCompletions(messages, { model: visionModel });
 
       const cancelled = this.cancelRequested;
       const finalText = cancelled
@@ -167,7 +176,7 @@ class DeepSeekLLMService {
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           provider: 'deepseek-vision',
-          model: this.model,
+          model: visionModel,
           usedFallback: false,
           streamed: !!onDelta,
           cancelled,
@@ -178,7 +187,8 @@ class DeepSeekLLMService {
       this.errorCount++;
       logger.error('DeepSeek vision screenshot failed', {
         error: error.message,
-        requestId: this.requestCount
+        requestId: this.requestCount,
+        model: this.visionModel || this.model
       });
       throw error;
     }
@@ -413,10 +423,11 @@ class DeepSeekLLMService {
     };
   }
 
-  chatCompletions(messages) {
+  chatCompletions(messages, options = {}) {
     const maxTokens = config.get('llm.deepseek.maxTokens') || 2048;
+    const model = options.model || this.model;
     const body = JSON.stringify({
-      model: this.model,
+      model,
       messages,
       temperature: 0.7,
       max_tokens: maxTokens,
@@ -467,10 +478,11 @@ class DeepSeekLLMService {
    * Stream chat completions (SSE). Invokes onDelta(delta, fullText) for each token.
    * Resolves with the full assembled response.
    */
-  chatCompletionsStream(messages, onDelta) {
+  chatCompletionsStream(messages, onDelta, options = {}) {
     const maxTokens = config.get('llm.deepseek.maxTokens') || 2048;
+    const model = options.model || this.model;
     const body = JSON.stringify({
-      model: this.model,
+      model,
       messages,
       temperature: 0.7,
       max_tokens: maxTokens,

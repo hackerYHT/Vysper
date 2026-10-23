@@ -295,6 +295,7 @@ class WindowManager {
         titleBarStyle: 'hidden',
         transparent: true,
         resizable: true,
+        movable: true,
         minimizable: false,
         maximizable: false,
         closable: false,
@@ -302,7 +303,7 @@ class WindowManager {
         ...(process.platform === 'darwin' && {
           titleBarStyle: 'hiddenInset',
           trafficLightPosition: { x: -100, y: -100 },
-          type: 'panel',
+          // Avoid type:'panel' — CSS drag regions often fail on panel windows (Electron 44+)
           acceptFirstMouse: true
         }),
         level: process.platform === 'darwin' ? 'floating' : undefined,
@@ -1127,15 +1128,27 @@ class WindowManager {
   }
 
   /**
+   * Voice + screenshot answers stay in chat only (no separate AI response pane).
+   */
+  isChatOnlyResponse(metadata = {}) {
+    if (metadata.chatOnly || metadata.isTranscriptionResponse) return true;
+    const source = metadata.source || '';
+    return (
+      source === 'screenshot-vision' ||
+      source === 'screenshot' ||
+      source === 'screenshot_ocr'
+    );
+  }
+
+  /**
    * Streaming LLM response helpers for the answer window + chat broadcasts.
    */
   beginLLMResponseStream(metadata = {}) {
     if (this.isScreenBeingShared) return;
 
-    const chatOnly = !!metadata.isTranscriptionResponse;
+    const chatOnly = this.isChatOnlyResponse(metadata);
 
     if (chatOnly) {
-      // Voice answers belong in the chat window only
       this.showChatWindow();
       this.hideLLMResponse();
     } else {
@@ -1184,7 +1197,7 @@ class WindowManager {
 
     // Stream `done` already rendered content — do NOT also send display-llm-response
     // (that duplicated the same answer / error twice).
-    if (!metadata.isTranscriptionResponse) {
+    if (!this.isChatOnlyResponse(metadata)) {
       const llmWindow = this.windows.get('llmResponse');
       if (llmWindow && !llmWindow.isDestroyed()) {
         this.showOnCurrentDesktop(llmWindow, { force: false });
@@ -1193,7 +1206,6 @@ class WindowManager {
         }
       }
     } else {
-      // Voice: stay in chat only
       const chatWindow = this.windows.get('chat');
       if (!chatWindow || chatWindow.isDestroyed() || !chatWindow.isVisible()) {
         this.showChatWindow();

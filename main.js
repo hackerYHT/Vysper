@@ -1,6 +1,12 @@
 require("dotenv").config();
 
 const { app, BrowserWindow, globalShortcut, session, ipcMain, dialog } = require("electron");
+
+// Reduce Chromium SIGTRAP crashes on newer macOS (seen with Electron 29)
+if (process.platform === "darwin") {
+  app.disableHardwareAcceleration();
+}
+
 const fs = require("fs");
 const path = require("path");
 const logger = require("./src/core/logger").createServiceLogger("MAIN");
@@ -295,18 +301,13 @@ class ApplicationController {
     });
 
     ipcMain.handle("move-window", (event, { deltaX, deltaY }) => {
-      const mainWindow = windowManager.getWindow("main");
-      if (mainWindow) {
-        const [currentX, currentY] = mainWindow.getPosition();
-        const newX = currentX + deltaX;
-        const newY = currentY + deltaY;
-        mainWindow.setPosition(newX, newY);
-        logger.debug("Main window moved", {
-          deltaX,
-          deltaY,
-          from: { x: currentX, y: currentY },
-          to: { x: newX, y: newY },
-        });
+      // Move the window that sent the request (chat / main / etc.), not only main
+      const win =
+        BrowserWindow.fromWebContents(event.sender) ||
+        windowManager.getWindow("main");
+      if (win && !win.isDestroyed()) {
+        const [currentX, currentY] = win.getPosition();
+        win.setPosition(currentX + (deltaX || 0), currentY + (deltaY || 0));
       }
       return { success: true };
     });
@@ -889,11 +890,12 @@ class ApplicationController {
         return;
       }
 
-      windowManager.showLLMLoading();
+      // Chat-only: do not open the separate AI response window
+      windowManager.showChatWindow();
+      windowManager.hideLLMResponse();
 
       const shot = await ocrService.captureScreenshotImage();
       if (!shot?.dataUrl) {
-        windowManager.hideLLMResponse();
         this.broadcastOCRError("Screenshot capture failed");
         return;
       }
@@ -952,12 +954,12 @@ class ApplicationController {
   async triggerScreenshotViaOcr() {
     const startTime = Date.now();
     try {
-      windowManager.showLLMLoading();
+      windowManager.showChatWindow();
+      windowManager.hideLLMResponse();
 
       const ocrResult = await ocrService.captureAndProcess();
 
       if (!ocrResult.text || ocrResult.text.trim().length === 0) {
-        windowManager.hideLLMResponse();
         this.broadcastOCRError("No text found in screenshot");
         return;
       }
@@ -994,6 +996,7 @@ class ApplicationController {
       skill: this.activeSkill,
       source: "screenshot-vision",
       provider: "deepseek-vision",
+      chatOnly: true,
     };
 
     windowManager.beginLLMResponseStream(streamMeta);
@@ -1028,22 +1031,17 @@ class ApplicationController {
       });
 
       windowManager.endLLMResponseStream(llmResult.response, {
-        skill: this.activeSkill,
+        ...streamMeta,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: false,
         cancelled: !!llmResult.metadata.cancelled,
-        provider: "deepseek-vision",
       });
-
-      if (!llmResult.metadata?.streamed) {
-        this.broadcastLLMSuccess(llmResult);
-      }
+      // Always stream into chat — do not also open llmResponse via broadcastLLMSuccess
     } catch (error) {
-      // Surface failure once in the answer pane (don't leave "正在识图" forever)
+      // Surface failure once in chat (don't leave "正在识图" forever)
       const friendly = this.formatScreenshotError(error.message);
       windowManager.endLLMResponseStream(friendly, {
-        skill: this.activeSkill,
-        source: "screenshot-vision",
+        ...streamMeta,
         error: true,
       });
       // Don't rethrow — outer trigger already logged; avoids duplicate UI errors
@@ -1058,17 +1056,25 @@ class ApplicationController {
 
   async processWithDsh(text, { isTranscriptionResponse = false, source = "chat" } = {}) {
     const started = Date.now();
+    const chatOnly =
+      isTranscriptionResponse ||
+      source === "screenshot" ||
+      source === "screenshot-vision";
     const streamMeta = {
       skill: this.activeSkill,
       provider: "dsh-headless",
       workspacePath: this.workspacePath,
       isTranscriptionResponse,
+      chatOnly,
       source,
     };
 
     this.beginGeneration();
     try {
-      if (!isTranscriptionResponse) {
+      if (chatOnly) {
+        windowManager.showChatWindow();
+        windowManager.hideLLMResponse();
+      } else {
         windowManager.showLLMLoading();
       }
       windowManager.beginLLMResponseStream(streamMeta);
@@ -1158,8 +1164,18 @@ class ApplicationController {
       const skillsRequiringProgrammingLanguage = ['programming', 'dsa', 'devops', 'system-design', 'data-science'];
       const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(effectiveSkill);
 
-      const streamMeta = { skill: effectiveSkill, source };
-      windowManager.showLLMLoading();
+      const streamMeta = {
+        skill: effectiveSkill,
+        source,
+        chatOnly: source === "screenshot",
+      };
+      // Screenshots stay in chat; other chat/text may still use answer pane
+      if (source === "screenshot") {
+        windowManager.showChatWindow();
+        windowManager.hideLLMResponse();
+      } else {
+        windowManager.showLLMLoading();
+      }
       windowManager.beginLLMResponseStream(streamMeta);
       this.beginGeneration();
 
@@ -1201,12 +1217,15 @@ class ApplicationController {
 
       windowManager.endLLMResponseStream(llmResult.response, {
         skill: this.activeSkill,
+        source,
+        chatOnly: source === "screenshot",
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
       });
 
       // Avoid duplicate chat messages when stream already delivered the answer
-      if (!llmResult.metadata?.streamed) {
+      // Screenshots are chat-only — never open the separate answer window
+      if (!llmResult.metadata?.streamed && source !== "screenshot") {
         this.broadcastLLMSuccess(llmResult);
       }
     } catch (error) {

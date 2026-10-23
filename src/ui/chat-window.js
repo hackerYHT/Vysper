@@ -17,6 +17,7 @@ class ChatWindowUI {
         this.isRecording = false;
         this.isInteractive = true; // Start in interactive mode
         this.elements = {};
+        this.stickToBottom = true;
         
         this.init();
     }
@@ -59,6 +60,21 @@ class ChatWindowUI {
         // Initialize listening timer
         this.listeningStartTime = null;
         this.listeningTimer = null;
+
+        if (this.elements.chatMessages) {
+            this.elements.chatMessages.addEventListener('scroll', () => {
+                this.stickToBottom = this.isNearBottom();
+            }, { passive: true });
+            this.elements.chatMessages.addEventListener('wheel', (e) => {
+                if (e.deltaY < 0) {
+                    this.stickToBottom = false;
+                } else {
+                    requestAnimationFrame(() => {
+                        this.stickToBottom = this.isNearBottom();
+                    });
+                }
+            }, { passive: true });
+        }
     }
 
     setupEventListeners() {
@@ -347,8 +363,10 @@ class ChatWindowUI {
         if (!data) return;
         if (data.phase === 'start') {
             this.hideThinkingIndicator();
+            this.stickToBottom = true;
             this.ensureStreamingAssistant();
             this.updateStreamingAssistant('', false);
+            this.scrollChatToBottom(true);
             return;
         }
         if (data.phase === 'delta') {
@@ -385,6 +403,20 @@ class ChatWindowUI {
         this.streamingAssistantEl = messageDiv;
     }
 
+    isNearBottom(threshold = 80) {
+        const el = this.elements.chatMessages;
+        if (!el) return true;
+        return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+    }
+
+    scrollChatToBottom(force = false) {
+        const el = this.elements.chatMessages;
+        if (!el) return;
+        if (force || this.stickToBottom) {
+            el.scrollTop = el.scrollHeight;
+        }
+    }
+
     updateStreamingAssistant(text, finalize) {
         if (!this.streamingAssistantEl) {
             if (!text) return;
@@ -399,7 +431,7 @@ class ChatWindowUI {
             this.streamingAssistantEl.classList.remove('streaming');
             delete this.streamingAssistantEl.dataset.streaming;
         }
-        this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+        this.scrollChatToBottom(false);
     }
 
     addMessage(text, type = 'user') {        
