@@ -17,6 +17,7 @@ const ocrService = require("./src/services/ocr.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
 const dshService = require("./src/services/dsh-headless.service");
+const chatStore = require("./src/services/chat-store.service");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -94,6 +95,8 @@ class ApplicationController {
       // Small delay to ensure desktop/space detection is accurate
       await new Promise((resolve) => setTimeout(resolve, 200));
 
+      await this.initChatStore();
+
       await windowManager.initializeWindows();
       this.setupGlobalShortcuts();
 
@@ -105,6 +108,7 @@ class ApplicationController {
       logger.info("Application initialized successfully", {
         windowCount: Object.keys(windowManager.getWindowStats().windows).length,
         currentDesktop: "detected",
+        chatSessionId: chatStore.currentSessionId,
       });
 
       sessionManager.addEvent("Application started");
@@ -312,6 +316,13 @@ class ApplicationController {
       return { success: true };
     });
 
+    ipcMain.handle("set-chat-sessions-sidebar", (_event, payload = {}) => {
+      return windowManager.setChatSessionsSidebar(
+        !!payload.open,
+        payload.width || 220
+      );
+    });
+
     ipcMain.handle("clipboard-write-text", (_event, text) => {
       clipboard.writeText(String(text ?? ""));
       return { success: true };
@@ -327,6 +338,43 @@ class ApplicationController {
 
     ipcMain.handle("new-session", () => {
       return this.newSession({ source: "ipc-new" });
+    });
+
+    ipcMain.handle("list-chat-sessions", async () => {
+      await chatStore.init();
+      return {
+        success: true,
+        currentSessionId: chatStore.currentSessionId,
+        sessions: chatStore.listSessions(),
+      };
+    });
+
+    ipcMain.handle("get-chat-session", async (_event, sessionId) => {
+      await chatStore.init();
+      const id = sessionId || chatStore.currentSessionId;
+      const session = chatStore.getSession(id);
+      if (!session) return { success: false, error: "not-found" };
+      return {
+        success: true,
+        session,
+        messages: chatStore.getMessages(id),
+        currentSessionId: chatStore.currentSessionId,
+      };
+    });
+
+    ipcMain.handle("switch-chat-session", async (_event, sessionId) => {
+      return this.switchChatSession(sessionId, { source: "ipc" });
+    });
+
+    ipcMain.handle("rename-chat-session", async (_event, payload = {}) => {
+      await chatStore.init();
+      const result = chatStore.renameSession(payload.sessionId, payload.title);
+      if (result.success) this.broadcastSessionsUpdated();
+      return result;
+    });
+
+    ipcMain.handle("delete-chat-session", async (_event, sessionId) => {
+      return this.deleteChatSession(sessionId, { source: "ipc" });
     });
 
     ipcMain.handle("cancel-generation", () => {
@@ -776,8 +824,54 @@ class ApplicationController {
     this.newSession({ source: "shortcut" });
   }
 
+  async initChatStore() {
+    await chatStore.init();
+    const current = chatStore.ensureCurrentSession();
+    sessionManager.setPersistenceHandler(({ role, content, uiType, metadata }) => {
+      chatStore.addMessage({
+        role: role === "model" ? "assistant" : role,
+        content,
+        uiType,
+        metadata,
+      });
+      // Keep sidebar titles/order fresh without spamming every token
+      this._sessionsBroadcastTimer && clearTimeout(this._sessionsBroadcastTimer);
+      this._sessionsBroadcastTimer = setTimeout(() => this.broadcastSessionsUpdated(), 400);
+    });
+
+    // Restore in-memory LLM context + dsh continuity for last session
+    const messages = chatStore.getMessages(current.id);
+    sessionManager.hydrateFromMessages(messages);
+    if (current.dshSessionId) {
+      dshService.setSessionId(current.dshSessionId);
+    } else {
+      dshService.clearSession();
+    }
+
+    logger.info("Chat store initialized", {
+      sessionId: current.id,
+      messageCount: messages.length,
+      dshSessionId: current.dshSessionId || null,
+    });
+  }
+
+  broadcastSessionsUpdated() {
+    windowManager.broadcastToAllWindows("chat-sessions-updated", {
+      currentSessionId: chatStore.currentSessionId,
+      sessions: chatStore.listSessions(),
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  syncDshSessionToStore() {
+    const dshId = dshService.getSessionId && dshService.getSessionId();
+    if (dshId && chatStore.currentSessionId) {
+      chatStore.setDshSessionId(chatStore.currentSessionId, dshId);
+    }
+  }
+
   /**
-   * Start a fresh conversation: clear Vysper memory + dsh session continuity.
+   * Start a fresh conversation: new SQLite session + clear RAM/dsh continuity.
    */
   newSession({ source = "unknown" } = {}) {
     try {
@@ -789,19 +883,132 @@ class ApplicationController {
       sessionManager.clear();
       this.endGeneration();
 
+      const session = chatStore.createSession({ title: "新会话", makeCurrent: true });
+
       const payload = {
         reason: "new-session",
         source,
         timestamp: new Date().toISOString(),
         workspacePath: this.workspacePath || null,
         dshEnabled: this.shouldUseDsh(),
+        sessionId: session.id,
+        session,
       };
 
       windowManager.broadcastToAllWindows("session-cleared", payload);
+      this.broadcastSessionsUpdated();
       logger.info("New session started", payload);
       return { success: true, ...payload };
     } catch (error) {
       logger.error("Failed to start new session", { error: error.message, source });
+      return { success: false, error: error.message };
+    }
+  }
+
+  switchChatSession(sessionId, { source = "unknown" } = {}) {
+    try {
+      if (!sessionId) return { success: false, error: "missing-session-id" };
+      if (sessionId === chatStore.currentSessionId) {
+        const session = chatStore.getSession(sessionId);
+        return {
+          success: true,
+          session,
+          messages: chatStore.getMessages(sessionId),
+          unchanged: true,
+        };
+      }
+
+      if (this.isGenerating) {
+        this.cancelGeneration(`switch-session:${source}`);
+      }
+      dshService.cancel();
+
+      const switched = chatStore.setCurrentSession(sessionId);
+      if (!switched.success) return switched;
+
+      const session = switched.session;
+      const messages = chatStore.getMessages(sessionId);
+      sessionManager.clear();
+      sessionManager.hydrateFromMessages(messages);
+
+      if (session.dshSessionId) {
+        dshService.setSessionId(session.dshSessionId);
+      } else {
+        dshService.clearSession();
+      }
+      this.endGeneration();
+
+      const payload = {
+        reason: "switch-session",
+        source,
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        session,
+        messages,
+      };
+
+      windowManager.broadcastToAllWindows("session-loaded", payload);
+      this.broadcastSessionsUpdated();
+      logger.info("Switched chat session", {
+        sessionId: session.id,
+        messageCount: messages.length,
+        source,
+      });
+      return { success: true, ...payload };
+    } catch (error) {
+      logger.error("Failed to switch chat session", {
+        error: error.message,
+        sessionId,
+        source,
+      });
+      return { success: false, error: error.message };
+    }
+  }
+
+  deleteChatSession(sessionId, { source = "unknown" } = {}) {
+    try {
+      if (!sessionId) return { success: false, error: "missing-session-id" };
+      const wasCurrent = sessionId === chatStore.currentSessionId;
+
+      if (wasCurrent && this.isGenerating) {
+        this.cancelGeneration(`delete-session:${source}`);
+      }
+
+      const result = chatStore.deleteSession(sessionId);
+      if (!result.success) return result;
+
+      if (wasCurrent) {
+        dshService.cancel();
+        const current = result.currentSession;
+        const messages = chatStore.getMessages(current.id);
+        sessionManager.clear();
+        sessionManager.hydrateFromMessages(messages);
+        if (current.dshSessionId) {
+          dshService.setSessionId(current.dshSessionId);
+        } else {
+          dshService.clearSession();
+        }
+        this.endGeneration();
+
+        windowManager.broadcastToAllWindows("session-loaded", {
+          reason: "delete-session",
+          source,
+          timestamp: new Date().toISOString(),
+          sessionId: current.id,
+          session: current,
+          messages,
+        });
+      }
+
+      this.broadcastSessionsUpdated();
+      logger.info("Deleted chat session", { sessionId, wasCurrent, source });
+      return result;
+    } catch (error) {
+      logger.error("Failed to delete chat session", {
+        error: error.message,
+        sessionId,
+        source,
+      });
       return { success: false, error: error.message };
     }
   }
@@ -1155,6 +1362,7 @@ class ApplicationController {
         workspacePath: this.workspacePath,
         isTranscriptionResponse,
       });
+      this.syncDshSessionToStore();
 
       windowManager.endLLMResponseStream(llmResult.response, {
         skill: this.activeSkill,
@@ -1517,11 +1725,17 @@ class ApplicationController {
   onWillQuit() {
     globalShortcut.unregisterAll();
     windowManager.destroyAllWindows();
+    try {
+      chatStore.close();
+    } catch (_) {
+      /* ignore */
+    }
 
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
       sessionSize: sessionStats.approximateSize,
+      chatSessionId: chatStore.currentSessionId,
     });
   }
 

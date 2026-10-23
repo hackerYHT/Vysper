@@ -29,9 +29,203 @@
         border: 1px solid rgba(255, 255, 255, 0.1);
         box-shadow: 0 4px 25px rgba(0, 0, 0, 0.15);
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
         /* Only the header is draggable — full-container drag breaks Electron 44 */
         -webkit-app-region: no-drag;
+        overflow: hidden;
+      }
+      .chat-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+      /* DeepSeek-style session sidebar */
+      .session-sidebar {
+        width: 0;
+        flex-shrink: 0;
+        overflow: hidden;
+        border-right: 0 solid rgba(255, 255, 255, 0.08);
+        background: rgba(12, 12, 16, 0.92);
+        backdrop-filter: blur(18px);
+        display: flex;
+        flex-direction: column;
+        transition: width 0.2s ease, border-right-width 0.2s ease;
+        -webkit-app-region: no-drag;
+      }
+      .chat-container.sessions-open .session-sidebar {
+        width: 220px;
+        border-right-width: 1px;
+      }
+      .session-sidebar-inner {
+        width: 220px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 10px 8px 12px;
+        box-sizing: border-box;
+      }
+      .session-sidebar-top {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .session-sidebar-top .session-new-btn {
+        flex: 1;
+        margin-bottom: 0;
+      }
+      .session-collapse-btn {
+        flex-shrink: 0;
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.88);
+        border-radius: 10px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-app-region: no-drag;
+      }
+      .session-collapse-btn:hover {
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .session-new-btn {
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.95);
+        border-radius: 999px;
+        padding: 9px 12px;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        -webkit-app-region: no-drag;
+      }
+      .session-new-btn:hover {
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .session-group-label {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.45);
+        padding: 4px 8px 8px;
+        letter-spacing: 0.02em;
+      }
+      .session-list {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-right: 2px;
+      }
+      .session-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        border-radius: 8px;
+        padding: 0;
+        background: transparent;
+      }
+      .session-item.active {
+        background: rgba(66, 133, 244, 0.22);
+      }
+      .session-item-btn {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.82);
+        text-align: left;
+        padding: 9px 8px;
+        font-size: 12px;
+        line-height: 1.35;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-radius: 8px;
+      }
+      .session-item.active .session-item-btn {
+        color: #8ab4f8;
+        font-weight: 560;
+      }
+      .session-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .session-item.active:hover {
+        background: rgba(66, 133, 244, 0.28);
+      }
+      .session-item-menu {
+        flex-shrink: 0;
+        width: 26px;
+        height: 26px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.55);
+        cursor: pointer;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        margin-right: 4px;
+      }
+      .session-item:hover .session-item-menu,
+      .session-item.active .session-item-menu,
+      .session-item.menu-open .session-item-menu {
+        display: flex;
+      }
+      .session-item-menu:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: #fff;
+      }
+      .session-item-actions {
+        display: none;
+        position: absolute;
+        right: 6px;
+        top: calc(100% - 4px);
+        z-index: 50;
+        min-width: 108px;
+        padding: 4px;
+        border-radius: 8px;
+        background: rgba(28, 28, 34, 0.98);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      }
+      .session-item.menu-open .session-item-actions {
+        display: flex;
+        flex-direction: column;
+      }
+      .session-item-actions button {
+        border: none;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.88);
+        text-align: left;
+        padding: 7px 10px;
+        font-size: 12px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .session-item-actions button:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .session-item-actions button.danger {
+        color: #f28b82;
+      }
+      .session-empty {
+        padding: 16px 10px;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.4);
+        text-align: center;
       }
       .chat-header {
         position: relative;
@@ -152,6 +346,9 @@
         flex: 1;
         min-width: 0;
         user-select: none;
+      }
+      .header-title .chat-header-btn {
+        -webkit-app-region: no-drag;
       }
       .recording-indicator {
         width: 8px;
@@ -985,8 +1182,28 @@
   </head>
   <body>
     <div class="chat-container" id="chatContainer">
+      <aside class="session-sidebar" id="sessionSidebar" aria-label="会话历史">
+        <div class="session-sidebar-inner">
+          <div class="session-sidebar-top">
+            <button type="button" class="session-new-btn" id="sidebarNewSessionBtn" title="新建会话 (⌘⇧\)">
+              <i class="fas fa-plus" aria-hidden="true"></i>
+              New chat
+            </button>
+            <button type="button" class="session-collapse-btn" id="collapseSessionsBtn" title="折叠会话历史" aria-label="折叠会话历史">
+              <i class="fas fa-angles-left" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="session-group-label">历史会话</div>
+          <div class="session-list" id="sessionList"></div>
+        </div>
+      </aside>
+
+      <div class="chat-main">
       <div class="chat-header">
         <div class="header-title">
+          <button type="button" class="chat-header-btn" id="toggleSessionsBtn" title="会话历史" aria-label="会话历史" style="padding:6px 8px;">
+            <i class="fas fa-clock-rotate-left" aria-hidden="true"></i>
+          </button>
           <span
             class="penetrate-lamp clickable"
             id="penetrateLamp"
@@ -1002,10 +1219,6 @@
           <button type="button" class="chat-header-btn" id="stopGenerationBtn" title="停止回答 (Esc)" style="display:none;background:rgba(244,67,54,0.35);">
             <i class="fas fa-stop"></i>
             停止
-          </button>
-          <button type="button" class="chat-header-btn" id="newSessionBtn" title="新建会话 (⌘⇧\)">
-            <i class="fas fa-plus"></i>
-            新建会话
           </button>
           <div class="shortcuts-help-wrap" id="shortcutsHelpWrap">
             <button type="button" class="chat-header-btn help-btn" id="shortcutsHelpBtn" aria-label="快捷键说明" aria-expanded="false" title="快捷键说明">
@@ -1072,6 +1285,7 @@
             <i class="fas fa-paper-plane"></i>
           </button>
         </div>
+      </div>
       </div>
     </div>
     <script src="lib/marked.min.js"></script>
@@ -1540,7 +1754,10 @@
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
         const clock = document.createElement('span');
-        clock.textContent = new Date().toLocaleTimeString();
+        const when = meta && meta.createdAt ? new Date(meta.createdAt) : new Date();
+        clock.textContent = Number.isNaN(when.getTime())
+          ? new Date().toLocaleTimeString()
+          : when.toLocaleTimeString();
         timeDiv.appendChild(clock);
 
         const textDiv = document.createElement('div');
@@ -1789,8 +2006,10 @@
           handleRecordingStopped();
         });
 
-        whysperAPI.onSessionCleared((event, data) => {
-          // Fresh UI for a new session
+        let currentSessionId = null;
+        let sessionListCache = [];
+
+        function clearChatUi({ systemNote = null } = {}) {
           chatMessages.innerHTML = '';
           stopStreamElapsedTimer();
           streamingAssistantEl = null;
@@ -1799,27 +2018,251 @@
           navActiveId = null;
           refreshChatNav();
           hideThinkingIndicator();
+          if (systemNote) addMessage(systemNote, 'system');
+          updateScrollFabs();
+        }
+
+        function renderStoredMessages(messages) {
+          clearChatUi();
+          (messages || []).forEach((msg) => {
+            const type = msg.uiType || (msg.role === 'assistant' ? 'assistant' : msg.role);
+            if (type === 'system' || type === 'error') {
+              addMessage(msg.content, type, { createdAt: msg.createdAt });
+              return;
+            }
+            const meta = {
+              createdAt: msg.createdAt,
+              ...(msg.metadata || {}),
+            };
+            addMessage(msg.content, type === 'model' ? 'assistant' : type, meta);
+          });
+          stickToBottom = true;
+          scrollChatToBottom(true);
+          updateScrollFabs();
+        }
+
+        function closeAllSessionMenus() {
+          document.querySelectorAll('.session-item.menu-open').forEach((el) => {
+            el.classList.remove('menu-open');
+          });
+        }
+
+        function renderSessionList(sessions, activeId) {
+          const listEl = document.getElementById('sessionList');
+          if (!listEl) return;
+          sessionListCache = sessions || [];
+          currentSessionId = activeId || currentSessionId;
+          listEl.innerHTML = '';
+
+          if (!sessionListCache.length) {
+            const empty = document.createElement('div');
+            empty.className = 'session-empty';
+            empty.textContent = '暂无历史会话';
+            listEl.appendChild(empty);
+            return;
+          }
+
+          sessionListCache.forEach((session) => {
+            const row = document.createElement('div');
+            row.className = 'session-item' + (session.id === currentSessionId ? ' active' : '');
+            row.dataset.sessionId = session.id;
+
+            const openBtn = document.createElement('button');
+            openBtn.type = 'button';
+            openBtn.className = 'session-item-btn';
+            openBtn.title = session.title || '新会话';
+            openBtn.textContent = session.title || '新会话';
+            openBtn.addEventListener('click', () => switchToSession(session.id));
+
+            const menuBtn = document.createElement('button');
+            menuBtn.type = 'button';
+            menuBtn.className = 'session-item-menu';
+            menuBtn.title = '更多';
+            menuBtn.innerHTML = '<i class="fas fa-ellipsis" aria-hidden="true"></i>';
+            menuBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const open = row.classList.contains('menu-open');
+              closeAllSessionMenus();
+              if (!open) row.classList.add('menu-open');
+            });
+
+            const actions = document.createElement('div');
+            actions.className = 'session-item-actions';
+            const renameBtn = document.createElement('button');
+            renameBtn.type = 'button';
+            renameBtn.textContent = '重命名';
+            renameBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              closeAllSessionMenus();
+              const next = window.prompt('重命名会话', session.title || '');
+              if (next == null) return;
+              try {
+                await whysperAPI.renameChatSession(session.id, next.trim());
+              } catch (err) {
+                addMessage(`重命名失败: ${err.message || err}`, 'error');
+              }
+            });
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'danger';
+            deleteBtn.textContent = '删除';
+            deleteBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              closeAllSessionMenus();
+              if (!window.confirm(`删除会话「${session.title || '新会话'}」？`)) return;
+              try {
+                await whysperAPI.deleteChatSession(session.id);
+              } catch (err) {
+                addMessage(`删除失败: ${err.message || err}`, 'error');
+              }
+            });
+            actions.appendChild(renameBtn);
+            actions.appendChild(deleteBtn);
+
+            row.appendChild(openBtn);
+            row.appendChild(menuBtn);
+            row.appendChild(actions);
+            listEl.appendChild(row);
+          });
+        }
+
+        async function refreshSessionList() {
+          if (!whysperAPI.listChatSessions) return;
+          try {
+            const result = await whysperAPI.listChatSessions();
+            if (result && result.success) {
+              renderSessionList(result.sessions || [], result.currentSessionId);
+            }
+          } catch (err) {
+            console.warn('Failed to list chat sessions', err);
+          }
+        }
+
+        async function loadCurrentSessionIntoUi() {
+          if (!whysperAPI.getChatSession) return;
+          try {
+            const result = await whysperAPI.getChatSession();
+            if (!result || !result.success) return;
+            currentSessionId = result.session && result.session.id;
+            renderStoredMessages(result.messages || []);
+            await refreshSessionList();
+          } catch (err) {
+            console.warn('Failed to load chat session', err);
+          }
+        }
+
+        async function switchToSession(sessionId) {
+          if (!sessionId || sessionId === currentSessionId) return;
+          if (!whysperAPI.switchChatSession) return;
+          try {
+            const result = await whysperAPI.switchChatSession(sessionId);
+            if (result && result.success && !result.unchanged) {
+              // UI also updates via session-loaded event
+              currentSessionId = result.sessionId;
+              renderStoredMessages(result.messages || []);
+              await refreshSessionList();
+            }
+          } catch (err) {
+            addMessage(`切换会话失败: ${err.message || err}`, 'error');
+          }
+        }
+
+        async function requestNewSession() {
+          try {
+            if (whysperAPI.newSession) {
+              await whysperAPI.newSession();
+            } else if (whysperAPI.clearSessionMemory) {
+              await whysperAPI.clearSessionMemory();
+            }
+          } catch (err) {
+            addMessage(`新建会话失败: ${err.message || err}`, 'error');
+          }
+        }
+
+        document.addEventListener('click', () => closeAllSessionMenus());
+
+        const SESSIONS_OPEN_KEY = 'vysper.sessionsSidebarOpen';
+        const SESSIONS_SIDEBAR_WIDTH = 220;
+        const toggleSessionsBtn = document.getElementById('toggleSessionsBtn');
+        const collapseSessionsBtn = document.getElementById('collapseSessionsBtn');
+
+        function setSessionsSidebarOpen(open) {
+          const next = !!open;
+          chatContainer.classList.toggle('sessions-open', next);
+          try {
+            localStorage.setItem(SESSIONS_OPEN_KEY, next ? '1' : '0');
+          } catch (_) { /* ignore */ }
+          if (toggleSessionsBtn) {
+            toggleSessionsBtn.title = next ? '折叠会话历史' : '展开会话历史';
+            toggleSessionsBtn.setAttribute('aria-label', toggleSessionsBtn.title);
+            toggleSessionsBtn.setAttribute('aria-expanded', next ? 'true' : 'false');
+          }
+          // Expand window leftward so chat content width stays the same
+          if (whysperAPI && typeof whysperAPI.setChatSessionsSidebar === 'function') {
+            whysperAPI.setChatSessionsSidebar(next, SESSIONS_SIDEBAR_WIDTH).catch(() => {});
+          }
+        }
+
+        function toggleSessionsSidebar() {
+          setSessionsSidebarOpen(!chatContainer.classList.contains('sessions-open'));
+        }
+
+        // Start closed in window bounds; then open if saved preference says so
+        // (avoids compressing chat on first paint before expand IPC runs)
+        chatContainer.classList.remove('sessions-open');
+        let preferOpen = true;
+        try {
+          const saved = localStorage.getItem(SESSIONS_OPEN_KEY);
+          if (saved === '0') preferOpen = false;
+          else if (saved === '1') preferOpen = true;
+        } catch (_) { /* ignore */ }
+        setSessionsSidebarOpen(preferOpen);
+
+        if (toggleSessionsBtn) {
+          toggleSessionsBtn.addEventListener('click', toggleSessionsSidebar);
+        }
+        if (collapseSessionsBtn) {
+          collapseSessionsBtn.addEventListener('click', () => setSessionsSidebarOpen(false));
+        }
+
+        whysperAPI.onSessionCleared((event, data) => {
+          currentSessionId = data && data.sessionId ? data.sessionId : currentSessionId;
           const note = (data && data.reason === 'new-session')
-            ? '已新建会话（本地记忆与 dsh 续聊已重置）'
+            ? '已新建会话（可继续提问；历史在左侧可回看）'
             : '会话记忆已清空';
-          addMessage(note, 'system');
+          clearChatUi({ systemNote: note });
+          refreshSessionList();
         });
 
-        const newSessionBtn = document.getElementById('newSessionBtn');
+        if (whysperAPI.onSessionLoaded) {
+          whysperAPI.onSessionLoaded((event, data) => {
+            currentSessionId = data && data.sessionId ? data.sessionId : currentSessionId;
+            renderStoredMessages((data && data.messages) || []);
+            refreshSessionList();
+          });
+        }
+
+        if (whysperAPI.onChatSessionsUpdated) {
+          whysperAPI.onChatSessionsUpdated((event, data) => {
+            if (data && data.sessions) {
+              renderSessionList(data.sessions, data.currentSessionId);
+            } else {
+              refreshSessionList();
+            }
+          });
+        }
+
+        loadCurrentSessionIntoUi();
+
+        const sidebarNewSessionBtn = document.getElementById('sidebarNewSessionBtn');
         const stopGenerationBtn = document.getElementById('stopGenerationBtn');
-        if (newSessionBtn) {
-          newSessionBtn.addEventListener('click', async () => {
+        if (sidebarNewSessionBtn) {
+          sidebarNewSessionBtn.addEventListener('click', async () => {
             try {
-              newSessionBtn.disabled = true;
-              if (whysperAPI.newSession) {
-                await whysperAPI.newSession();
-              } else if (whysperAPI.clearSessionMemory) {
-                await whysperAPI.clearSessionMemory();
-              }
-            } catch (err) {
-              addMessage(`新建会话失败: ${err.message || err}`, 'error');
+              sidebarNewSessionBtn.disabled = true;
+              await requestNewSession();
             } finally {
-              newSessionBtn.disabled = false;
+              sidebarNewSessionBtn.disabled = false;
             }
           });
         }

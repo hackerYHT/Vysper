@@ -71,11 +71,73 @@ class WindowManager {
       }
     };
 
+    /** Whether chat window width currently includes the sessions sidebar */
+    this.chatSessionsSidebarOpen = false;
+    this.chatSessionsSidebarWidth = 220;
+
     this.init();
   }
 
   init() {
     // ... existing initialization code ...
+  }
+
+  /**
+   * Grow/shrink the chat window to the left so the sidebar doesn't compress chat.
+   */
+  setChatSessionsSidebar(open, sidebarWidth = 220) {
+    const win = this.windows.get('chat');
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'no-chat-window' };
+    }
+
+    const wantOpen = !!open;
+    const width = Math.max(160, Math.min(360, Number(sidebarWidth) || 220));
+    const wasOpen = !!this.chatSessionsSidebarOpen;
+
+    if (wantOpen === wasOpen && width === this.chatSessionsSidebarWidth) {
+      return { success: true, unchanged: true, open: wantOpen, width };
+    }
+
+    const [x, y] = win.getPosition();
+    const [w, h] = win.getSize();
+    let nextX = x;
+    let nextW = w;
+
+    if (wantOpen && !wasOpen) {
+      nextX = x - width;
+      nextW = w + width;
+    } else if (!wantOpen && wasOpen) {
+      nextX = x + this.chatSessionsSidebarWidth;
+      nextW = Math.max(config.get('window.minWidth') || 300, w - this.chatSessionsSidebarWidth);
+    } else if (wantOpen && wasOpen && width !== this.chatSessionsSidebarWidth) {
+      const delta = width - this.chatSessionsSidebarWidth;
+      nextX = x - delta;
+      nextW = w + delta;
+    }
+
+    // Keep within the current display when expanding left
+    try {
+      const display = screen.getDisplayMatching({ x, y, width: w, height: h });
+      const minX = display.workArea.x;
+      const maxRight = display.workArea.x + display.workArea.width;
+      if (nextX < minX) nextX = minX;
+      if (nextX + nextW > maxRight) nextW = Math.max(config.get('window.minWidth') || 300, maxRight - nextX);
+    } catch (_) {
+      /* ignore */
+    }
+
+    win.setBounds({ x: nextX, y, width: nextW, height: h });
+    this.chatSessionsSidebarOpen = wantOpen;
+    this.chatSessionsSidebarWidth = width;
+
+    logger.debug('Chat sessions sidebar layout updated', {
+      open: wantOpen,
+      width,
+      bounds: { x: nextX, y, width: nextW, height: h },
+    });
+
+    return { success: true, open: wantOpen, width, bounds: { x: nextX, y, width: nextW, height: h } };
   }
 
   async initializeWindows() {

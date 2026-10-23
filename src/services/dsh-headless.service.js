@@ -85,6 +85,14 @@ class DshHeadlessService {
     this.sessionId = null;
   }
 
+  setSessionId(sessionId) {
+    this.sessionId = sessionId || null;
+  }
+
+  getSessionId() {
+    return this.sessionId;
+  }
+
   cancel() {
     this.cancelRequested = true;
     if (this.activeChild && !this.activeChild.killed) {

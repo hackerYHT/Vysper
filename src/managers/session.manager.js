@@ -10,8 +10,23 @@ class SessionManager {
     this.compressionThreshold = config.get('session.compressionThreshold');
     this.currentSkill = 'programming'; // Default skill
     this.isInitialized = false;
+    /** Optional (role, content, meta) => void — used to mirror into SQLite */
+    this.persistenceHandler = null;
     
     this.initializeWithSkillPrompts();
+  }
+
+  setPersistenceHandler(handler) {
+    this.persistenceHandler = typeof handler === 'function' ? handler : null;
+  }
+
+  _persist(role, content, meta = {}) {
+    if (!this.persistenceHandler) return;
+    try {
+      this.persistenceHandler({ role, content, ...meta });
+    } catch (error) {
+      logger.warn('Session persistence handler failed', { error: error.message });
+    }
   }
 
   /**
@@ -109,7 +124,7 @@ class SessionManager {
    * Add user transcription or chat input
    */
   addUserInput(text, source = 'chat') {
-    return this.addConversationEvent({
+    const id = this.addConversationEvent({
       role: 'user',
       content: text,
       action: source === 'speech' ? 'speech_transcription' : 'chat_input',
@@ -118,13 +133,18 @@ class SessionManager {
         textLength: text.length
       }
     });
+    this._persist('user', text, {
+      uiType: source === 'speech' ? 'transcription' : 'user',
+      metadata: { source },
+    });
+    return id;
   }
 
   /**
    * Add LLM/model response
    */
   addModelResponse(text, metadata = {}) {
-    return this.addConversationEvent({
+    const id = this.addConversationEvent({
       role: 'model',
       content: text,
       action: 'llm_response',
@@ -133,13 +153,18 @@ class SessionManager {
         responseLength: text.length
       }
     });
+    this._persist('assistant', text, {
+      uiType: 'assistant',
+      metadata,
+    });
+    return id;
   }
 
   /**
    * Add OCR extracted text
    */
   addOCREvent(extractedText, metadata = {}) {
-    return this.addConversationEvent({
+    const id = this.addConversationEvent({
       role: 'user',
       content: extractedText,
       action: 'ocr_extraction',
@@ -148,6 +173,43 @@ class SessionManager {
         source: 'screenshot',
         textLength: extractedText.length
       }
+    });
+    this._persist('user', extractedText, {
+      uiType: 'user',
+      metadata: { ...metadata, source: 'screenshot' },
+    });
+    return id;
+  }
+
+  /**
+   * Replace chat turns with persisted messages (keeps skill system prompts).
+   */
+  hydrateFromMessages(messages = []) {
+    this.sessionMemory = this.sessionMemory.filter(
+      (event) => event.metadata?.isInitialization
+    );
+
+    for (const msg of messages) {
+      const role = msg.role === 'assistant' ? 'model' : msg.role;
+      if (role !== 'user' && role !== 'model') continue;
+      this.sessionMemory.push(
+        this.createConversationEvent({
+          role,
+          content: msg.content,
+          skill: this.currentSkill,
+          action: role === 'user' ? 'chat_input' : 'llm_response',
+          metadata: {
+            ...(msg.metadata || {}),
+            restored: true,
+            uiType: msg.uiType || null,
+          },
+        })
+      );
+    }
+
+    logger.info('Session memory hydrated from store', {
+      messageCount: messages.length,
+      totalEvents: this.sessionMemory.length,
     });
   }
 

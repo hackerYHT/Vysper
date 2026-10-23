@@ -96,7 +96,12 @@ class DoubaoSpeechService extends EventEmitter {
       this.recording.stream().on('data', (chunk) => {
         if (!this.isRecording) return;
         this.pcmBuffer = Buffer.concat([this.pcmBuffer, Buffer.from(chunk)]);
-        this._flushAudioChunks(false);
+        // Only flush after full-client-request (seq=1). Building packets earlier
+        // burns sequence numbers and triggers Doubao:
+        // autoAssignedSequence (1) mismatch sequence in request (N)
+        if (this.wsReady) {
+          this._flushAudioChunks(false);
+        }
       });
 
       this.recording.stream().on('error', (error) => {
@@ -204,12 +209,11 @@ class DoubaoSpeechService extends EventEmitter {
     ws.on('open', () => {
       logger.info('Doubao ASR websocket open');
       try {
+        // Must be the first sequenced frame (seq=1) when X-Api-Sequence: -1
+        this.seq = 1;
+        this.sendQueue = [];
         ws.send(this._buildFullClientRequest());
         this.wsReady = true;
-        // Drain any audio that arrived before handshake
-        while (this.sendQueue.length) {
-          ws.send(this.sendQueue.shift());
-        }
         this._flushAudioChunks(false);
       } catch (error) {
         logger.error('Failed to send full client request', { error: error.message });

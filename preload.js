@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   switchToSkills: () => ipcRenderer.invoke('switch-to-skills'),
   resizeWindow: (width, height) => ipcRenderer.invoke('resize-window', { width, height }),
   moveWindow: (deltaX, deltaY) => ipcRenderer.invoke('move-window', { deltaX, deltaY }),
+  setChatSessionsSidebar: (open, width) =>
+    ipcRenderer.invoke('set-chat-sessions-sidebar', { open, width }),
   copyText: (text) => ipcRenderer.invoke('clipboard-write-text', text),
   getWindowStats: () => ipcRenderer.invoke('get-window-stats'),
   
@@ -27,6 +29,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLLMSessionHistory: () => ipcRenderer.invoke('get-llm-session-history'),
   clearSessionMemory: () => ipcRenderer.invoke('clear-session-memory'),
   newSession: () => ipcRenderer.invoke('new-session'),
+  listChatSessions: () => ipcRenderer.invoke('list-chat-sessions'),
+  getChatSession: (sessionId) => ipcRenderer.invoke('get-chat-session', sessionId),
+  switchChatSession: (sessionId) => ipcRenderer.invoke('switch-chat-session', sessionId),
+  renameChatSession: (sessionId, title) =>
+    ipcRenderer.invoke('rename-chat-session', { sessionId, title }),
+  deleteChatSession: (sessionId) => ipcRenderer.invoke('delete-chat-session', sessionId),
   cancelGeneration: () => ipcRenderer.invoke('cancel-generation'),
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
   sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
@@ -70,6 +78,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSpeechError: (callback) => ipcRenderer.on('speech-error', callback),
   onSessionEvent: (callback) => ipcRenderer.on('session-event', callback),
   onSessionCleared: (callback) => ipcRenderer.on('session-cleared', callback),
+  onSessionLoaded: (callback) => ipcRenderer.on('session-loaded', callback),
+  onChatSessionsUpdated: (callback) => ipcRenderer.on('chat-sessions-updated', callback),
   onOcrCompleted: (callback) => ipcRenderer.on('ocr-completed', callback),
   onOcrError: (callback) => ipcRenderer.on('ocr-error', callback),
   onLlmResponse: (callback) => ipcRenderer.on('llm-response', callback),
