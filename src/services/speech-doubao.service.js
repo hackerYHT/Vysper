@@ -9,7 +9,7 @@ const logger = require('../core/logger').createServiceLogger('SPEECH_DOUBAO');
  * Doubao (Volcengine) streaming ASR via WebSocket binary protocol.
  * Docs: https://docs.volcengine.com/docs/DoubaoVoice/LargemodelstreamingautomaticspeechrecognitionAPI
  *
- * Matches local/azure speech contract: startRecording / stopRecording / getStatus
+ * Matches local/azure speech contract: startRecording / stopRecording / cancelRecording / getStatus
  * + events: recording-started, recording-stopped, interim-transcription, transcription, status, error
  */
 class DoubaoSpeechService extends EventEmitter {
@@ -31,6 +31,8 @@ class DoubaoSpeechService extends EventEmitter {
 
     this.isRecording = false;
     this.isTranscribing = false;
+    /** When true, ignore finalize and never emit transcription */
+    this.discardRequested = false;
     this.recording = null;
     this.ws = null;
     this.sessionStartTime = null;
@@ -71,6 +73,7 @@ class DoubaoSpeechService extends EventEmitter {
     }
 
     try {
+      this.discardRequested = false;
       this.sessionStartTime = Date.now();
       this.seq = 1;
       this.pcmBuffer = Buffer.alloc(0);
@@ -136,6 +139,7 @@ class DoubaoSpeechService extends EventEmitter {
     this._flushAudioChunks(true)
       .then(() => this._waitForFinalText(5000))
       .then((text) => {
+        if (this.discardRequested) return;
         const cleaned = (text || this.latestText || '').trim();
         if (cleaned && !this.finalEmitted) {
           this.finalEmitted = true;
@@ -151,6 +155,7 @@ class DoubaoSpeechService extends EventEmitter {
         }
       })
       .catch((error) => {
+        if (this.discardRequested) return;
         logger.error('Doubao transcription failed', { error: error.message });
         this.emit('error', `豆包转写失败: ${error.message}`);
       })
@@ -158,6 +163,30 @@ class DoubaoSpeechService extends EventEmitter {
         this.isTranscribing = false;
         this._cleanupSession();
       });
+  }
+
+  /**
+   * Abort recording without emitting a transcription (Esc).
+   */
+  cancelRecording() {
+    if (!this.isRecording && !this.isTranscribing) return;
+    this.discardRequested = true;
+    this.finalEmitted = true; // block late finals
+    this.isRecording = false;
+    this.isTranscribing = false;
+    if (this.awaitingFinal) {
+      try {
+        this.awaitingFinal.resolve('');
+      } catch {
+        /* ignore */
+      }
+      this.awaitingFinal = null;
+    }
+    this._stopCaptureOnly();
+    this.emit('recording-stopped');
+    this.emit('interim-transcription', '');
+    this._cleanupSession();
+    logger.info('Doubao recording cancelled (discard)');
   }
 
   _connectWs() {
@@ -208,7 +237,9 @@ class DoubaoSpeechService extends EventEmitter {
         const text = this._extractText(parsed.payload);
         if (text) {
           this.latestText = text;
-          this.emit('interim-transcription', text);
+          if (!this.discardRequested) {
+            this.emit('interim-transcription', text);
+          }
         }
 
         // Last server response after negative-seq audio packet

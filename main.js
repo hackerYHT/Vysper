@@ -634,7 +634,8 @@ class ApplicationController {
   }
 
   /**
-   * ⌥Z — toggle voice input. Esc also stops while recording.
+   * ⌥Z — toggle voice input (stop will still submit transcription).
+   * Esc while recording cancels without submitting.
    */
   toggleSpeechRecognition() {
     const currentStatus = speechService.getStatus();
@@ -682,13 +683,38 @@ class ApplicationController {
   }
 
   /**
-   * Esc: stop voice if recording, else cancel in-flight AI answer.
+   * Abort voice without submitting transcription (Esc while recording).
+   */
+  cancelVoiceInput(source = "unknown") {
+    try {
+      const status = speechService.getStatus();
+      if (status.isRecording || status.isTranscribing) {
+        if (typeof speechService.cancelRecording === "function") {
+          speechService.cancelRecording();
+        } else {
+          speechService.stopRecording();
+        }
+      }
+      if (!this.isGenerating) {
+        this.unregisterEscapeHandler();
+      }
+      logger.info("Voice input cancelled (discard)", { source });
+    } catch (error) {
+      logger.error("Error cancelling voice input", { error: error.message, source });
+      if (!this.isGenerating) {
+        this.unregisterEscapeHandler();
+      }
+    }
+  }
+
+  /**
+   * Esc: discard voice if recording (no submit), else cancel in-flight AI answer.
    */
   handleEscape() {
-    const recording = speechService.getStatus()?.isRecording;
-    if (recording) {
-      this.stopVoiceInput("escape");
-      return { action: "stop-voice" };
+    const status = speechService.getStatus() || {};
+    if (status.isRecording || status.isTranscribing) {
+      this.cancelVoiceInput("escape");
+      return { action: "cancel-voice" };
     }
     if (this.isGenerating) {
       return this.cancelGeneration("escape");

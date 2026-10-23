@@ -15,6 +15,7 @@ class LocalWhisperSpeechService extends EventEmitter {
   constructor() {
     super();
     this.isRecording = false;
+    this.discardRequested = false;
     this.recording = null;
     this.sessionStartTime = null;
     this.audioFilePath = null;
@@ -101,6 +102,7 @@ class LocalWhisperSpeechService extends EventEmitter {
     }
 
     try {
+      this.discardRequested = false;
       this.sessionStartTime = Date.now();
       this.pcmChunks = [];
       this.audioFilePath = path.join(
@@ -145,6 +147,7 @@ class LocalWhisperSpeechService extends EventEmitter {
     }
 
     this.isRecording = false;
+    this.discardRequested = false;
     this._stopCaptureOnly();
 
     this.emit('recording-stopped');
@@ -166,10 +169,12 @@ class LocalWhisperSpeechService extends EventEmitter {
     this.isTranscribing = true;
     Promise.resolve()
       .then(() => {
+        if (this.discardRequested) return null;
         this.writeWavFile(wavPath, pcm, this.sampleRate);
         return this.transcribeFile(wavPath);
       })
       .then((text) => {
+        if (this.discardRequested) return;
         if (text && text.trim()) {
           const cleaned = text.trim();
           logger.info('Local Chinese transcription', {
@@ -184,6 +189,7 @@ class LocalWhisperSpeechService extends EventEmitter {
         }
       })
       .catch((error) => {
+        if (this.discardRequested) return;
         logger.error('Local transcription failed', { error: error.message });
         this.emit('error', `本地转写失败: ${error.message}`);
       })
@@ -191,6 +197,22 @@ class LocalWhisperSpeechService extends EventEmitter {
         this.isTranscribing = false;
         this._cleanupTempFile();
       });
+  }
+
+  /**
+   * Abort recording without emitting a transcription (Esc).
+   */
+  cancelRecording() {
+    if (!this.isRecording && !this.isTranscribing) return;
+    this.discardRequested = true;
+    this.isRecording = false;
+    this.isTranscribing = false;
+    this.pcmChunks = [];
+    this._stopCaptureOnly();
+    this.emit('recording-stopped');
+    this.emit('interim-transcription', '');
+    this._cleanupTempFile();
+    logger.info('Local Whisper recording cancelled (discard)');
   }
 
   _stopCaptureOnly() {

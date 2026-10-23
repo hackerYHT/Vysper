@@ -188,8 +188,18 @@ class DshHeadlessService {
       let stdoutBuf = '';
       let stderrBuf = '';
       let accumulatedText = '';
+      /** Provisional typewriter buffer from live text-delta (cleared on reset/commit). */
+      let liveDeltaText = '';
+      let sawLiveDelta = false;
       let finalText = '';
       let lastError = null;
+
+      const emitProgress = () => {
+        if (typeof options.onProgress !== 'function') return;
+        // Prefer committed blocks; fall back to live deltas while generating.
+        const view = accumulatedText || liveDeltaText;
+        if (view) options.onProgress(view);
+      };
 
       const child = spawn(launch.command, args, {
         cwd: workspacePath,
@@ -251,21 +261,43 @@ class DshHeadlessService {
             }
             break;
           }
+          case 'text-delta-reset': {
+            // New attempt discarded provisional stream — keep committed blocks.
+            liveDeltaText = '';
+            sawLiveDelta = false;
+            emitProgress();
+            break;
+          }
+          case 'text-delta': {
+            const chunk = event.text || event.content || '';
+            if (!chunk) break;
+            sawLiveDelta = true;
+            liveDeltaText += chunk;
+            // While streaming, show committed prefix + live tail.
+            if (typeof options.onProgress === 'function') {
+              const view = accumulatedText
+                ? `${accumulatedText}\n${liveDeltaText}`
+                : liveDeltaText;
+              options.onProgress(view);
+            }
+            break;
+          }
           case 'text': {
             const chunk = event.text || event.content || '';
             if (chunk) {
-              // Each text event is a committed assistant block — append.
+              // Committed block replaces provisional deltas for this attempt.
+              liveDeltaText = '';
+              sawLiveDelta = false;
               accumulatedText = accumulatedText
                 ? `${accumulatedText}\n${chunk}`
                 : chunk;
-              if (typeof options.onProgress === 'function') {
-                options.onProgress(accumulatedText);
-              }
+              emitProgress();
             }
             break;
           }
           case 'final': {
-            finalText = event.text || event.content || event.answer || accumulatedText || '';
+            finalText = event.text || event.content || event.answer
+              || accumulatedText || liveDeltaText || '';
             break;
           }
           case 'error': {
@@ -303,7 +335,7 @@ class DshHeadlessService {
       child.on('close', (code) => {
         if (stdoutBuf.trim()) handleLine(stdoutBuf);
 
-        const answer = (finalText || accumulatedText || '').trim();
+        const answer = (finalText || accumulatedText || (sawLiveDelta ? liveDeltaText : '') || '').trim();
         const cancelled = this.cancelRequested;
 
         if (cancelled) {

@@ -376,6 +376,7 @@ class SpeechService extends EventEmitter {
     super();
     this.recognizer = null;
     this.isRecording = false;
+    this.discardRequested = false;
     this.audioConfig = null;
     this.speechConfig = null;
     this.sessionStartTime = null;
@@ -457,6 +458,7 @@ class SpeechService extends EventEmitter {
 
       this.sessionStartTime = Date.now();
       this.retryCount = 0;
+      this.discardRequested = false;
 
       this._attemptRecording();
     } catch (error) {
@@ -499,6 +501,7 @@ class SpeechService extends EventEmitter {
              // Set up event handlers with better error handling
        this.recognizer.recognizing = (s, e) => {
          try {
+           if (this.discardRequested) return;
            if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
              logger.debug('Interim transcription received', { 
                text: e.result.text,
@@ -514,6 +517,7 @@ class SpeechService extends EventEmitter {
 
        this.recognizer.recognized = (s, e) => {
          try {
+           if (this.discardRequested) return;
            if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
              const sessionDuration = Date.now() - this.sessionStartTime;
              
@@ -651,6 +655,7 @@ class SpeechService extends EventEmitter {
     }
 
     this.isRecording = false;
+    this.discardRequested = false;
     const sessionDuration = this.sessionStartTime ? Date.now() - this.sessionStartTime : 0;
     
     logger.info('Stopping speech recognition session', { 
@@ -682,6 +687,19 @@ class SpeechService extends EventEmitter {
     } else {
       this._cleanup();
     }
+  }
+
+  /**
+   * Abort recording without emitting a transcription (Esc).
+   */
+  cancelRecording() {
+    if (!this.isRecording) return;
+    this.discardRequested = true;
+    this.isRecording = false;
+    this.emit('recording-stopped');
+    this.emit('interim-transcription', '');
+    this._cleanup();
+    logger.info('Azure recording cancelled (discard)');
   }
 
   _cleanup() {
