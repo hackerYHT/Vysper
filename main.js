@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const { app, BrowserWindow, globalShortcut, session, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, dialog, clipboard } = require("electron");
 
 // Reduce Chromium SIGTRAP crashes on newer macOS (seen with Electron 29)
 if (process.platform === "darwin") {
@@ -309,6 +309,11 @@ class ApplicationController {
         const [currentX, currentY] = win.getPosition();
         win.setPosition(currentX + (deltaX || 0), currentY + (deltaY || 0));
       }
+      return { success: true };
+    });
+
+    ipcMain.handle("clipboard-write-text", (_event, text) => {
+      clipboard.writeText(String(text ?? ""));
       return { success: true };
     });
 

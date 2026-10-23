@@ -18,16 +18,136 @@ class ChatWindowUI {
         this.isInteractive = true; // Start in interactive mode
         this.elements = {};
         this.stickToBottom = true;
+        this.streamStartedAt = null;
+        this.streamElapsedTimer = null;
         
         this.init();
+    }
+
+    formatDurationMs(ms) {
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n < 0) return '';
+        if (n < 1000) return `${Math.round(n)}ms`;
+        const sec = n / 1000;
+        return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
+    }
+
+    ensureMessageActions(messageEl) {
+        if (!messageEl) return null;
+        const timeDiv = messageEl.querySelector('.message-time');
+        if (!timeDiv) return null;
+        let actions = timeDiv.querySelector('.message-actions');
+        if (!actions) {
+            actions = document.createElement('div');
+            actions.className = 'message-actions';
+            timeDiv.appendChild(actions);
+        }
+        return actions;
+    }
+
+    setMessageDuration(messageEl, label) {
+        if (!messageEl) return;
+        const actions = this.ensureMessageActions(messageEl);
+        if (!actions) return;
+        let dur = actions.querySelector('.message-duration');
+        if (!label) {
+            if (dur) dur.remove();
+            return;
+        }
+        if (!dur) {
+            dur = document.createElement('span');
+            dur.className = 'message-duration';
+            const copyBtn = actions.querySelector('.message-copy-btn');
+            if (copyBtn) actions.insertBefore(dur, copyBtn);
+            else actions.appendChild(dur);
+        }
+        dur.textContent = label;
+    }
+
+    getMessagePlainText(messageEl) {
+        if (!messageEl) return '';
+        if (messageEl.dataset.rawText) return messageEl.dataset.rawText;
+        const textDiv = messageEl.querySelector('.message-text');
+        return textDiv ? (textDiv.innerText || textDiv.textContent || '') : '';
+    }
+
+    async copyMessageText(messageEl, btn) {
+        const text = this.getMessagePlainText(messageEl).trim();
+        if (!text) return;
+        try {
+            if (window.electronAPI && typeof window.electronAPI.copyText === 'function') {
+                await window.electronAPI.copyText(text);
+            } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+            }
+            if (btn) {
+                btn.classList.add('copied');
+                const icon = btn.querySelector('i');
+                if (icon) {
+                    icon.className = 'fas fa-check';
+                    setTimeout(() => {
+                        icon.className = 'fas fa-copy';
+                        btn.classList.remove('copied');
+                    }, 1200);
+                }
+            }
+        } catch (err) {
+            console.error('Copy failed:', err);
+        }
+    }
+
+    attachCopyButton(messageEl) {
+        if (!messageEl) return;
+        const actions = this.ensureMessageActions(messageEl);
+        if (!actions || actions.querySelector('.message-copy-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'message-copy-btn';
+        btn.title = '复制';
+        btn.setAttribute('aria-label', '复制');
+        btn.innerHTML = '<i class="fas fa-copy"></i>';
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.copyMessageText(messageEl, btn);
+        });
+        actions.appendChild(btn);
+    }
+
+    stopStreamElapsedTimer() {
+        if (this.streamElapsedTimer) {
+            clearInterval(this.streamElapsedTimer);
+            this.streamElapsedTimer = null;
+        }
+    }
+
+    startStreamElapsedTimer(messageEl) {
+        this.stopStreamElapsedTimer();
+        this.streamStartedAt = Date.now();
+        this.setMessageDuration(messageEl, '耗时 0.0s');
+        this.streamElapsedTimer = setInterval(() => {
+            if (!this.streamingAssistantEl || !this.streamStartedAt) return;
+            const elapsed = Date.now() - this.streamStartedAt;
+            this.setMessageDuration(
+                this.streamingAssistantEl,
+                `耗时 ${this.formatDurationMs(elapsed)}`
+            );
+        }, 200);
     }
 
     init() {
         try {
             this.setupElements();
             this.setupEventListeners();
-            this.addMessage('Chat window initialized. Click microphone or press ⌘+R to start recording.', 'system');
-            
             logger.info('Chat window UI initialized successfully');
         } catch (error) {
             logger.error('Failed to initialize chat window UI', { error: error.message });
@@ -109,9 +229,7 @@ class ChatWindowUI {
             
             window.electronAPI.onSpeechStatus((event, data) => {
                 if (data && data.status) {
-                    this.addMessage(data.status, 'system');
-                    
-                    // Update recording state based on status
+                    // Update recording UI only — no system chat spam
                     if (data.status.includes('started') || data.status.includes('Recording')) {
                         this.handleRecordingStarted();
                     } else if (data.status.includes('stopped') || data.status.includes('ended')) {
@@ -365,17 +483,19 @@ class ChatWindowUI {
             this.hideThinkingIndicator();
             this.stickToBottom = true;
             this.ensureStreamingAssistant();
+            this.startStreamElapsedTimer(this.streamingAssistantEl);
             this.updateStreamingAssistant('', false);
             this.scrollChatToBottom(true);
             return;
         }
         if (data.phase === 'delta') {
             this.ensureStreamingAssistant();
+            if (!this.streamStartedAt) this.startStreamElapsedTimer(this.streamingAssistantEl);
             this.updateStreamingAssistant(data.content || '', false);
             return;
         }
         if (data.phase === 'done') {
-            this.updateStreamingAssistant(data.content || '', true);
+            this.updateStreamingAssistant(data.content || '', true, data.metadata || {});
             this.streamingAssistantEl = null;
         }
     }
@@ -392,13 +512,16 @@ class ChatWindowUI {
 
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
-        timeDiv.textContent = new Date().toLocaleTimeString();
+        const clock = document.createElement('span');
+        clock.textContent = new Date().toLocaleTimeString();
+        timeDiv.appendChild(clock);
 
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
 
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
+        this.attachCopyButton(messageDiv);
         this.elements.chatMessages.appendChild(messageDiv);
         this.streamingAssistantEl = messageDiv;
     }
@@ -417,24 +540,52 @@ class ChatWindowUI {
         }
     }
 
-    updateStreamingAssistant(text, finalize) {
+    updateStreamingAssistant(text, finalize, meta) {
         if (!this.streamingAssistantEl) {
             if (!text) return;
-            this.addMessage(text, 'assistant');
+            this.addMessage(text, 'assistant', meta);
             return;
         }
         const textDiv = this.streamingAssistantEl.querySelector('.message-text');
         if (!textDiv) return;
 
+        this.streamingAssistantEl.dataset.rawText = text || '';
         textDiv.innerHTML = this.formatMarkdown(text || '');
         if (finalize) {
             this.streamingAssistantEl.classList.remove('streaming');
             delete this.streamingAssistantEl.dataset.streaming;
+            this.stopStreamElapsedTimer();
+            const serverMs = meta && meta.processingTime;
+            const elapsed = this.streamStartedAt ? Date.now() - this.streamStartedAt : null;
+            const ms = Number.isFinite(Number(serverMs)) ? Number(serverMs) : elapsed;
+            if (ms != null) {
+                this.setMessageDuration(
+                    this.streamingAssistantEl,
+                    `耗时 ${this.formatDurationMs(ms)}`
+                );
+            }
+            this.attachCopyButton(this.streamingAssistantEl);
+            this.streamStartedAt = null;
+            this.stickToBottom = false;
+            const el = this.streamingAssistantEl;
+            requestAnimationFrame(() => {
+                this.scrollMessageToStart(el);
+            });
+            return;
         }
         this.scrollChatToBottom(false);
     }
 
-    addMessage(text, type = 'user') {        
+    scrollMessageToStart(messageEl) {
+        const box = this.elements.chatMessages;
+        if (!box || !messageEl || !messageEl.isConnected) return;
+        const msgRect = messageEl.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+        const next = box.scrollTop + (msgRect.top - boxRect.top) - 8;
+        box.scrollTo({ top: Math.max(0, next), behavior: 'smooth' });
+    }
+
+    addMessage(text, type = 'user', meta) {        
         if (!this.elements.chatMessages) {
             console.error('❌ Chat messages element not found!');
             return;
@@ -445,10 +596,13 @@ class ChatWindowUI {
         
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
-        timeDiv.textContent = new Date().toLocaleTimeString();
+        const clock = document.createElement('span');
+        clock.textContent = new Date().toLocaleTimeString();
+        timeDiv.appendChild(clock);
         
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
+        messageDiv.dataset.rawText = text || '';
         
         // Format assistant messages as markdown
         if (type === 'assistant') {
@@ -459,6 +613,14 @@ class ChatWindowUI {
         
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
+
+        if (type === 'assistant' || type === 'user' || type === 'transcription') {
+            this.attachCopyButton(messageDiv);
+        }
+
+        if (type === 'assistant' && meta && Number.isFinite(Number(meta.processingTime))) {
+            this.setMessageDuration(messageDiv, `耗时 ${this.formatDurationMs(meta.processingTime)}`);
+        }
         
         this.elements.chatMessages.appendChild(messageDiv);
         

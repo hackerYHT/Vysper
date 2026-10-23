@@ -176,14 +176,192 @@
           transform: scale(1);
         }
       }
+      .chat-messages-wrap {
+        flex: 1;
+        min-height: 0;
+        position: relative;
+        display: flex;
+        -webkit-app-region: no-drag;
+      }
       .chat-messages {
         flex: 1;
         padding: 20px;
+        padding-right: 28px;
         overflow-y: auto;
         overflow-x: hidden;
         -webkit-app-region: no-drag;
         box-sizing: border-box;
         /* Removed max-height restriction */
+      }
+      /* Floating question navigator (right rail + hover labels) */
+      .chat-nav {
+        position: absolute;
+        top: 12px;
+        right: 6px;
+        bottom: 12px;
+        z-index: 40;
+        display: none;
+        align-items: stretch;
+        pointer-events: none;
+        -webkit-app-region: no-drag;
+      }
+      .chat-nav.visible {
+        display: flex;
+      }
+      .chat-nav-panel {
+        display: flex;
+        align-items: stretch;
+        margin-left: auto;
+        max-height: 100%;
+        background: transparent;
+        border-radius: 14px;
+        padding: 8px 4px;
+        gap: 8px;
+        pointer-events: auto;
+        transition: background 0.18s ease, box-shadow 0.18s ease, padding 0.18s ease;
+      }
+      .chat-nav:hover .chat-nav-panel,
+      .chat-nav.expanded .chat-nav-panel {
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+        padding: 10px 8px 10px 12px;
+      }
+      .chat-nav-list {
+        display: none;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 0;
+        min-width: 0;
+        max-width: 168px;
+        overflow: hidden;
+      }
+      .chat-nav:hover .chat-nav-list,
+      .chat-nav.expanded .chat-nav-list {
+        display: flex;
+      }
+      .chat-nav-item {
+        border: none;
+        background: transparent;
+        color: #9aa0a6;
+        font-size: 11px;
+        line-height: 1.35;
+        text-align: right;
+        padding: 4px 0;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 168px;
+        font-family: inherit;
+      }
+      .chat-nav-item:hover {
+        color: #5f6368;
+      }
+      .chat-nav-item.active {
+        color: #1a73e8;
+        font-weight: 600;
+      }
+      .chat-nav-rail {
+        position: relative;
+        width: 14px;
+        flex-shrink: 0;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      .chat-nav-track {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        left: 50%;
+        width: 3px;
+        transform: translateX(-50%);
+        background: #e8eaed;
+        border-radius: 2px;
+      }
+      .chat-nav-ticks {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        left: 0;
+        right: 0;
+      }
+      .chat-nav-tick {
+        position: absolute;
+        left: 50%;
+        width: 8px;
+        height: 2px;
+        margin-left: -4px;
+        background: #dadce0;
+        border-radius: 1px;
+        transform: translateY(-50%);
+      }
+      .chat-nav-tick.active {
+        background: #1a73e8;
+        width: 10px;
+        margin-left: -5px;
+        height: 3px;
+      }
+      .chat-nav-thumb {
+        position: absolute;
+        left: 50%;
+        width: 5px;
+        height: 28px;
+        margin-left: -2.5px;
+        background: #bdc1c6;
+        border-radius: 3px;
+        transform: translateY(-50%);
+        top: 0%;
+        transition: top 0.12s ease;
+        pointer-events: none;
+      }
+      /* Always-visible slim hit target when panel collapsed */
+      .chat-nav-hotzone {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 18px;
+        pointer-events: auto;
+      }
+      .chat-scroll-fab {
+        position: absolute;
+        right: 22px;
+        z-index: 35;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        pointer-events: none;
+        -webkit-app-region: no-drag;
+      }
+      .chat-scroll-fab.bottom {
+        bottom: 16px;
+      }
+      .chat-scroll-fab.top {
+        top: 16px;
+      }
+      .chat-scroll-btn {
+        pointer-events: auto;
+        width: 32px;
+        height: 32px;
+        border: none;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.14);
+        color: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+        cursor: pointer;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+      }
+      .chat-scroll-btn.visible {
+        display: inline-flex;
+      }
+      .chat-scroll-btn:hover {
+        background: rgba(255, 255, 255, 0.28);
+        color: #fff;
       }
       .message {
         margin-bottom: 16px;
@@ -467,6 +645,48 @@
         font-size: 11px;
         margin-bottom: 4px;
         font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .message-duration {
+        color: rgba(255, 220, 160, 0.85);
+        font-size: 11px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .message.streaming .message-duration {
+        color: rgba(255, 255, 255, 0.55);
+      }
+      .message-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+      .message-copy-btn {
+        -webkit-app-region: no-drag;
+        background: transparent;
+        border: none;
+        color: rgba(255, 255, 255, 0.45);
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 4px;
+        font-size: 12px;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .message-copy-btn:hover {
+        color: rgba(255, 255, 255, 0.9);
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .message-copy-btn.copied {
+        color: rgba(129, 199, 132, 0.95);
       }
       .message-text {
         color: rgba(255, 255, 255, 0.95);
@@ -780,7 +1000,30 @@
       <!-- Interim Text Overlay -->
       <div class="interim-overlay" id="interimOverlay"></div>
 
-      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-messages-wrap">
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-scroll-fab top">
+          <button type="button" class="chat-scroll-btn" id="scrollToTopBtn" title="到顶部" aria-label="到顶部">
+            <i class="fas fa-arrow-up" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="chat-scroll-fab bottom">
+          <button type="button" class="chat-scroll-btn" id="scrollToBottomBtn" title="到底部" aria-label="到底部">
+            <i class="fas fa-arrow-down" aria-hidden="true"></i>
+          </button>
+        </div>
+        <aside class="chat-nav" id="chatNav" aria-label="问题导航">
+          <div class="chat-nav-hotzone" id="chatNavHotzone" title="问题列表"></div>
+          <div class="chat-nav-panel" id="chatNavPanel">
+            <div class="chat-nav-list" id="chatNavList"></div>
+            <div class="chat-nav-rail" id="chatNavRail">
+              <div class="chat-nav-track"></div>
+              <div class="chat-nav-ticks" id="chatNavTicks"></div>
+              <div class="chat-nav-thumb" id="chatNavThumb"></div>
+            </div>
+          </div>
+        </aside>
+      </div>
 
       <div class="chat-input">
         <div class="input-container">
@@ -819,8 +1062,253 @@
       let listeningStartTime = null;
       let listeningTimer = null;
       let streamingAssistantEl = null;
+      let streamStartedAt = null;
+      let streamElapsedTimer = null;
       // If user scrolls up while streaming, pause stick-to-bottom
       let stickToBottom = true;
+
+      function formatDurationMs(ms) {
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n < 0) return '';
+        if (n < 1000) return `${Math.round(n)}ms`;
+        const sec = n / 1000;
+        return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
+      }
+
+      function ensureMessageActions(messageEl) {
+        if (!messageEl) return null;
+        const timeDiv = messageEl.querySelector('.message-time');
+        if (!timeDiv) return null;
+        let actions = timeDiv.querySelector('.message-actions');
+        if (!actions) {
+          actions = document.createElement('div');
+          actions.className = 'message-actions';
+          timeDiv.appendChild(actions);
+        }
+        return actions;
+      }
+
+      function setMessageDuration(messageEl, label) {
+        if (!messageEl) return;
+        const actions = ensureMessageActions(messageEl);
+        if (!actions) return;
+        let dur = actions.querySelector('.message-duration');
+        if (!label) {
+          if (dur) dur.remove();
+          return;
+        }
+        if (!dur) {
+          dur = document.createElement('span');
+          dur.className = 'message-duration';
+          const copyBtn = actions.querySelector('.message-copy-btn');
+          if (copyBtn) actions.insertBefore(dur, copyBtn);
+          else actions.appendChild(dur);
+        }
+        dur.textContent = label;
+      }
+
+      function getMessagePlainText(messageEl) {
+        if (!messageEl) return '';
+        if (messageEl.dataset.rawText) return messageEl.dataset.rawText;
+        const textDiv = messageEl.querySelector('.message-text');
+        return textDiv ? (textDiv.innerText || textDiv.textContent || '') : '';
+      }
+
+      async function copyMessageText(messageEl, btn) {
+        const text = getMessagePlainText(messageEl).trim();
+        if (!text) return;
+        try {
+          // Electron renderer clipboard often fails — use main-process IPC
+          if (whysperAPI && typeof whysperAPI.copyText === 'function') {
+            await whysperAPI.copyText(text);
+          } else if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+          }
+          if (btn) {
+            btn.classList.add('copied');
+            const icon = btn.querySelector('i');
+            if (icon) {
+              icon.className = 'fas fa-check';
+              setTimeout(() => {
+                icon.className = 'fas fa-copy';
+                btn.classList.remove('copied');
+              }, 1200);
+            }
+          }
+        } catch (err) {
+          console.error('Copy failed:', err);
+        }
+      }
+
+      function attachCopyButton(messageEl) {
+        if (!messageEl) return;
+        const actions = ensureMessageActions(messageEl);
+        if (!actions || actions.querySelector('.message-copy-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'message-copy-btn';
+        btn.title = '复制';
+        btn.setAttribute('aria-label', '复制');
+        btn.innerHTML = '<i class="fas fa-copy" aria-hidden="true"></i>';
+        const onCopy = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          copyMessageText(messageEl, btn);
+        };
+        btn.addEventListener('click', onCopy);
+        btn.addEventListener('mousedown', (e) => e.stopPropagation());
+        actions.appendChild(btn);
+      }
+
+      // --- Question navigator (right floating rail) ---
+      let questionSeq = 0;
+      let navActiveId = null;
+      const chatNav = document.getElementById('chatNav');
+      const chatNavList = document.getElementById('chatNavList');
+      const chatNavTicks = document.getElementById('chatNavTicks');
+      const chatNavThumb = document.getElementById('chatNavThumb');
+      const chatNavHotzone = document.getElementById('chatNavHotzone');
+
+      function truncateNavLabel(text, max = 18) {
+        const t = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!t) return '（空）';
+        return t.length > max ? `${t.slice(0, max)}…` : t;
+      }
+
+      function getQuestionMessages() {
+        if (!chatMessages) return [];
+        return Array.from(
+          chatMessages.querySelectorAll('.message.user[data-question-id], .message.transcription[data-question-id]')
+        );
+      }
+
+      function refreshChatNav() {
+        if (!chatNav || !chatNavList || !chatNavTicks) return;
+        const questions = getQuestionMessages();
+        if (questions.length < 1) {
+          chatNav.classList.remove('visible', 'expanded');
+          chatNavList.innerHTML = '';
+          chatNavTicks.innerHTML = '';
+          return;
+        }
+        chatNav.classList.add('visible');
+        chatNavList.innerHTML = '';
+        chatNavTicks.innerHTML = '';
+        const n = questions.length;
+        questions.forEach((el, index) => {
+          const id = el.dataset.questionId;
+          const label = truncateNavLabel(el.dataset.rawText || el.querySelector('.message-text')?.innerText);
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'chat-nav-item' + (id === navActiveId ? ' active' : '');
+          item.dataset.targetId = id;
+          item.title = label;
+          item.textContent = label;
+          item.addEventListener('click', (e) => {
+            e.preventDefault();
+            jumpToQuestion(id);
+          });
+          chatNavList.appendChild(item);
+
+          const tick = document.createElement('div');
+          tick.className = 'chat-nav-tick' + (id === navActiveId ? ' active' : '');
+          tick.dataset.targetId = id;
+          const pct = n === 1 ? 50 : (index / (n - 1)) * 100;
+          tick.style.top = `${pct}%`;
+          tick.addEventListener('click', (e) => {
+            e.preventDefault();
+            jumpToQuestion(id);
+          });
+          chatNavTicks.appendChild(tick);
+        });
+        updateNavThumb();
+      }
+
+      function jumpToQuestion(questionId) {
+        if (!chatMessages || !questionId) return;
+        const el = chatMessages.querySelector(`[data-question-id="${questionId}"]`);
+        if (!el) return;
+        navActiveId = questionId;
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        refreshChatNav();
+        // brief highlight
+        el.style.outline = '1px solid rgba(26, 115, 232, 0.55)';
+        setTimeout(() => { el.style.outline = ''; }, 900);
+      }
+
+      function updateNavActiveFromScroll() {
+        if (!chatMessages) return;
+        const questions = getQuestionMessages();
+        if (!questions.length) return;
+        const containerTop = chatMessages.getBoundingClientRect().top;
+        let best = questions[0];
+        let bestDist = Infinity;
+        for (const el of questions) {
+          const top = el.getBoundingClientRect().top - containerTop;
+          // Prefer the last question that has scrolled past ~40px into view
+          const dist = Math.abs(top - 40);
+          if (top <= 80 && dist < bestDist + 1) {
+            best = el;
+            bestDist = dist;
+          }
+        }
+        // If scrolled to bottom, prefer last
+        if (chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 40) {
+          best = questions[questions.length - 1];
+        }
+        const id = best.dataset.questionId;
+        if (id && id !== navActiveId) {
+          navActiveId = id;
+          refreshChatNav();
+        } else {
+          updateNavThumb();
+        }
+      }
+
+      function updateNavThumb() {
+        if (!chatNavThumb || !chatMessages) return;
+        const maxScroll = Math.max(1, chatMessages.scrollHeight - chatMessages.clientHeight);
+        const ratio = Math.min(1, Math.max(0, chatMessages.scrollTop / maxScroll));
+        chatNavThumb.style.top = `${ratio * 100}%`;
+      }
+
+      if (chatNavHotzone) {
+        chatNavHotzone.addEventListener('mouseenter', () => {
+          if (chatNav) chatNav.classList.add('expanded');
+        });
+      }
+      if (chatNav) {
+        chatNav.addEventListener('mouseleave', () => {
+          chatNav.classList.remove('expanded');
+        });
+      }
+
+      function stopStreamElapsedTimer() {
+        if (streamElapsedTimer) {
+          clearInterval(streamElapsedTimer);
+          streamElapsedTimer = null;
+        }
+      }
+
+      function startStreamElapsedTimer(messageEl) {
+        stopStreamElapsedTimer();
+        streamStartedAt = Date.now();
+        setMessageDuration(messageEl, '耗时 0.0s');
+        streamElapsedTimer = setInterval(() => {
+          if (!streamingAssistantEl || !streamStartedAt) return;
+          const elapsed = Date.now() - streamStartedAt;
+          setMessageDuration(streamingAssistantEl, `耗时 ${formatDurationMs(elapsed)}`);
+        }, 200);
+      }
 
       if (typeof marked !== 'undefined' && typeof marked.setOptions === 'function') {
         marked.setOptions({ gfm: true, breaks: true, pedantic: false });
@@ -831,16 +1319,57 @@
         return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
       }
 
+      function isNearTop(el, threshold = 80) {
+        if (!el) return true;
+        return el.scrollTop <= threshold;
+      }
+
       function scrollChatToBottom(force = false) {
         if (!chatMessages) return;
         if (force || stickToBottom) {
           chatMessages.scrollTop = chatMessages.scrollHeight;
         }
+        updateScrollFabs();
+      }
+
+      const scrollToTopBtn = document.getElementById('scrollToTopBtn');
+      const scrollToBottomBtn = document.getElementById('scrollToBottomBtn');
+
+      function updateScrollFabs() {
+        if (!chatMessages) return;
+        const canScroll = chatMessages.scrollHeight > chatMessages.clientHeight + 40;
+        const showTop = canScroll && !isNearTop(chatMessages);
+        const showBottom = canScroll && !isNearBottom(chatMessages);
+        if (scrollToTopBtn) scrollToTopBtn.classList.toggle('visible', showTop);
+        if (scrollToBottomBtn) scrollToBottomBtn.classList.toggle('visible', showBottom);
+      }
+
+      if (scrollToTopBtn) {
+        scrollToTopBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          stickToBottom = false;
+          if (chatMessages) {
+            chatMessages.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        });
+      }
+      if (scrollToBottomBtn) {
+        scrollToBottomBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          stickToBottom = true;
+          if (chatMessages) {
+            chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: 'smooth' });
+          }
+        });
       }
 
       if (chatMessages) {
         chatMessages.addEventListener('scroll', () => {
           stickToBottom = isNearBottom(chatMessages);
+          updateScrollFabs();
+          updateNavActiveFromScroll();
         }, { passive: true });
         // Detach immediately on scroll-up so streaming deltas cannot yank back down
         chatMessages.addEventListener('wheel', (e) => {
@@ -849,6 +1378,7 @@
           } else {
             requestAnimationFrame(() => {
               stickToBottom = isNearBottom(chatMessages);
+              updateScrollFabs();
             });
           }
         }, { passive: true });
@@ -862,6 +1392,7 @@
           else if (touchStartY - y > 8) {
             requestAnimationFrame(() => {
               stickToBottom = isNearBottom(chatMessages);
+              updateScrollFabs();
             });
           }
         }, { passive: true });
@@ -874,30 +1405,59 @@
         messageDiv.className = 'message assistant streaming';
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
-        timeDiv.textContent = new Date().toLocaleTimeString();
+        const clock = document.createElement('span');
+        clock.textContent = new Date().toLocaleTimeString();
+        timeDiv.appendChild(clock);
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
+        attachCopyButton(messageDiv);
         chatMessages.appendChild(messageDiv);
         streamingAssistantEl = messageDiv;
         // New stream: resume stick-to-bottom unless user already scrolled up
         stickToBottom = isNearBottom(chatMessages);
       }
 
-      function updateStreamingAssistant(text, finalize) {
+      function updateStreamingAssistant(text, finalize, meta) {
         if (!streamingAssistantEl) {
-          if (text) addMessage(text, 'assistant');
+          if (text) addMessage(text, 'assistant', meta);
           return;
         }
         const textDiv = streamingAssistantEl.querySelector('.message-text');
         if (!textDiv) return;
+        streamingAssistantEl.dataset.rawText = text || '';
         // Always render as markdown (including mid-stream) so **bold**/lists show correctly
         textDiv.innerHTML = formatMarkdown(text || '');
         if (finalize) {
           streamingAssistantEl.classList.remove('streaming');
+          stopStreamElapsedTimer();
+          const serverMs = meta && meta.processingTime;
+          const elapsed = streamStartedAt ? Date.now() - streamStartedAt : null;
+          const ms = Number.isFinite(Number(serverMs)) ? Number(serverMs) : elapsed;
+          if (ms != null) {
+            setMessageDuration(streamingAssistantEl, `耗时 ${formatDurationMs(ms)}`);
+          }
+          attachCopyButton(streamingAssistantEl);
+          streamStartedAt = null;
+          // Jump to the start of this AI reply so user needn't scroll back up
+          stickToBottom = false;
+          const el = streamingAssistantEl;
+          requestAnimationFrame(() => {
+            scrollMessageToStart(el);
+          });
+          return;
         }
         scrollChatToBottom(false);
+      }
+
+      function scrollMessageToStart(messageEl) {
+        if (!chatMessages || !messageEl || !messageEl.isConnected) return;
+        const msgRect = messageEl.getBoundingClientRect();
+        const boxRect = chatMessages.getBoundingClientRect();
+        const next = chatMessages.scrollTop + (msgRect.top - boxRect.top) - 8;
+        chatMessages.scrollTo({ top: Math.max(0, next), behavior: 'smooth' });
+        updateScrollFabs();
       }
 
       function handleLlmStream(data) {
@@ -906,19 +1466,21 @@
           hideThinkingIndicator();
           stickToBottom = true;
           ensureStreamingAssistant();
+          startStreamElapsedTimer(streamingAssistantEl);
           updateStreamingAssistant('', false);
           scrollChatToBottom(true);
         } else if (data.phase === 'delta') {
           ensureStreamingAssistant();
+          if (!streamStartedAt) startStreamElapsedTimer(streamingAssistantEl);
           updateStreamingAssistant(data.content || '', false);
         } else if (data.phase === 'done') {
-          updateStreamingAssistant(data.content || '', true);
+          updateStreamingAssistant(data.content || '', true, data.metadata || {});
           streamingAssistantEl = null;
         }
       }
 
       // Basic message function with markdown support for assistant messages
-      function addMessage(text, type = 'user') {
+      function addMessage(text, type = 'user', meta) {
         if (!chatMessages) {
           console.error('Chat messages element not found!');
           return;
@@ -929,10 +1491,21 @@
 
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
-        timeDiv.textContent = new Date().toLocaleTimeString();
+        const clock = document.createElement('span');
+        clock.textContent = new Date().toLocaleTimeString();
+        timeDiv.appendChild(clock);
 
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
+        messageDiv.dataset.rawText = text || '';
+
+        if (type === 'user' || type === 'transcription') {
+          questionSeq += 1;
+          const qid = `q-${questionSeq}`;
+          messageDiv.dataset.questionId = qid;
+          messageDiv.id = `chat-${qid}`;
+          navActiveId = qid;
+        }
         
         // Format assistant messages as markdown
         if (type === 'assistant') {
@@ -944,8 +1517,20 @@
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
 
+        if (type === 'assistant' || type === 'user' || type === 'transcription') {
+          attachCopyButton(messageDiv);
+        }
+
+        if (type === 'assistant' && meta && Number.isFinite(Number(meta.processingTime))) {
+          setMessageDuration(messageDiv, `耗时 ${formatDurationMs(meta.processingTime)}`);
+        }
+
         chatMessages.appendChild(messageDiv);
+        if (type === 'user' || type === 'transcription') {
+          refreshChatNav();
+        }
         scrollChatToBottom(true);
+        updateScrollFabs();
       }
 
       // Markdown via marked (GFM: fences, lists, tables, …)
@@ -1074,7 +1659,6 @@
         }
 
         hideListeningAnimation();
-        addMessage('Stopped Listening', 'system');
       }
 
       function handleTranscription(text) {
@@ -1114,11 +1698,9 @@
           }
         });
 
-        // Listen for speech status
+        // Speech status only updates recording UI — do not spam chat with blue system messages
         whysperAPI.onSpeechStatus((event, data) => {
           if (data && data.status) {
-            addMessage(data.status, 'system');
-
             if (data.status.includes('started') || data.status.includes('Recording')) {
               handleRecordingStarted();
             } else if (data.status.includes('stopped') || data.status.includes('ended')) {
@@ -1147,7 +1729,12 @@
         whysperAPI.onSessionCleared((event, data) => {
           // Fresh UI for a new session
           chatMessages.innerHTML = '';
+          stopStreamElapsedTimer();
           streamingAssistantEl = null;
+          streamStartedAt = null;
+          questionSeq = 0;
+          navActiveId = null;
+          refreshChatNav();
           hideThinkingIndicator();
           const note = (data && data.reason === 'new-session')
             ? '已新建会话（本地记忆与 dsh 续聊已重置）'
@@ -1274,11 +1861,12 @@
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
           if (data && data.response) {
             hideThinkingIndicator();
+            const meta = data.metadata || {};
             if (streamingAssistantEl) {
-              updateStreamingAssistant(data.response, true);
+              updateStreamingAssistant(data.response, true, meta);
               streamingAssistantEl = null;
             } else {
-              addMessage(data.response, 'assistant');
+              addMessage(data.response, 'assistant', meta);
             }
           }
         });
@@ -1400,7 +1988,6 @@
       })();
 
       // Initialize
-      addMessage('Recording in Progress. press Alt+R to stop recording.', 'system');
     </script>
   </body>
 </html>
