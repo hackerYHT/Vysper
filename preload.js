@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSessionCleared: (callback) => ipcRenderer.on('session-cleared', callback),
   onSessionLoaded: (callback) => ipcRenderer.on('session-loaded', callback),
   onChatSessionsUpdated: (callback) => ipcRenderer.on('chat-sessions-updated', callback),
+  onSessionsSidebarSet: (callback) => ipcRenderer.on('sessions-sidebar-set', callback),
   onOcrCompleted: (callback) => ipcRenderer.on('ocr-completed', callback),
   onOcrError: (callback) => ipcRenderer.on('ocr-error', callback),
   onLlmResponse: (callback) => ipcRenderer.on('llm-response', callback),

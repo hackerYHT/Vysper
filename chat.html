@@ -47,8 +47,8 @@
         flex-shrink: 0;
         overflow: hidden;
         border-right: 0 solid rgba(255, 255, 255, 0.08);
-        background: rgba(12, 12, 16, 0.92);
-        backdrop-filter: blur(18px);
+        background: rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(10px);
         display: flex;
         flex-direction: column;
         transition: width 0.2s ease, border-right-width 0.2s ease;
@@ -2186,7 +2186,7 @@
         const toggleSessionsBtn = document.getElementById('toggleSessionsBtn');
         const collapseSessionsBtn = document.getElementById('collapseSessionsBtn');
 
-        function setSessionsSidebarOpen(open) {
+        function setSessionsSidebarOpen(open, { syncWindow = true } = {}) {
           const next = !!open;
           chatContainer.classList.toggle('sessions-open', next);
           try {
@@ -2198,7 +2198,11 @@
             toggleSessionsBtn.setAttribute('aria-expanded', next ? 'true' : 'false');
           }
           // Expand window leftward so chat content width stays the same
-          if (whysperAPI && typeof whysperAPI.setChatSessionsSidebar === 'function') {
+          if (
+            syncWindow &&
+            whysperAPI &&
+            typeof whysperAPI.setChatSessionsSidebar === 'function'
+          ) {
             whysperAPI.setChatSessionsSidebar(next, SESSIONS_SIDEBAR_WIDTH).catch(() => {});
           }
         }
@@ -2207,16 +2211,14 @@
           setSessionsSidebarOpen(!chatContainer.classList.contains('sessions-open'));
         }
 
-        // Start closed in window bounds; then open if saved preference says so
-        // (avoids compressing chat on first paint before expand IPC runs)
-        chatContainer.classList.remove('sessions-open');
-        let preferOpen = true;
-        try {
-          const saved = localStorage.getItem(SESSIONS_OPEN_KEY);
-          if (saved === '0') preferOpen = false;
-          else if (saved === '1') preferOpen = true;
-        } catch (_) { /* ignore */ }
-        setSessionsSidebarOpen(preferOpen);
+        // Default collapsed; user expands via header / sidebar controls
+        setSessionsSidebarOpen(false);
+
+        if (whysperAPI.onSessionsSidebarSet) {
+          whysperAPI.onSessionsSidebarSet((_event, data) => {
+            setSessionsSidebarOpen(!!(data && data.open), { syncWindow: false });
+          });
+        }
 
         if (toggleSessionsBtn) {
           toggleSessionsBtn.addEventListener('click', toggleSessionsSidebar);

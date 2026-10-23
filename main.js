@@ -665,6 +665,12 @@ class ApplicationController {
 
       windowManager.showChatWindow();
       windowManager.setInteractive(true);
+      // ⌥R opens chat with sessions sidebar collapsed
+      windowManager.setChatSessionsSidebar(false);
+      const chat = windowManager.getWindow("chat");
+      if (chat && !chat.isDestroyed()) {
+        chat.webContents.send("sessions-sidebar-set", { open: false });
+      }
       logger.info("Chat window shown (interactive) via ⌥R");
     } catch (error) {
       logger.error("Failed to toggle chat via ⌥R", { error: error.message });
